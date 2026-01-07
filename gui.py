@@ -1,10 +1,10 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, simpledialog, Toplevel
 import pandas as pd
 import json
 import os
-# IMPORTANTE: Importamos la lógica desde scheduler.py
 from scheduler import AutoScheduler 
+from functools import partial 
 
 class SchoolSchedulerApp:
     def __init__(self, root):
@@ -41,7 +41,6 @@ class SchoolSchedulerApp:
         
         # 2. DEMÁS PESTAÑAS
         self.create_requirements_tab()
-        self.create_run_tab()
         self.create_visual_tab()
 
         self.load_state()
@@ -86,15 +85,39 @@ class SchoolSchedulerApp:
 
     # --- PERSISTENCIA ---
     def save_state(self):
-        state = {"catalogs": self.data, "requirements": self.requirements}
+        # 1. Capturar asignaciones actuales si existe el motor
+        allocated_classes = []
+        if self.scheduler_engine:
+            for day in self.scheduler_engine.days:
+                df = self.scheduler_engine.grid[day]
+                for time in self.scheduler_engine.hours:
+                    for room in self.scheduler_engine.rooms:
+                        cell = df.at[time, room]
+                        if cell:
+                            # Guardamos la 'foto' de esta asignación
+                            allocated_classes.append({
+                                'day': day,
+                                'time': time,
+                                'room': room,
+                                'data': cell # El objeto clase (maestro, materia, etc.)
+                            })
+
+        # 2. Estructura de guardado completa
+        state = {
+            "catalogs": self.data,
+            "requirements": self.requirements,
+            "allocations": allocated_classes # <--- NUEVO CAMPO CRÍTICO
+        }
+        
         try:
             with open(self.db_file, 'w', encoding='utf-8') as f:
                 json.dump(state, f, indent=4, ensure_ascii=False)
-            messagebox.showinfo("Guardado", "Cambios guardados localmente.")
+            messagebox.showinfo("Guardado", "Cambios y Horario actual guardados.")
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
     def load_state(self):
+
         if not os.path.exists(self.db_file): return
         try:
             with open(self.db_file, 'r', encoding='utf-8') as f:
@@ -102,14 +125,53 @@ class SchoolSchedulerApp:
             self.data = state.get("catalogs", self.data)
             self.requirements = state.get("requirements", [])
             self.refresh_crud_views()
+            
+            # Limpiar y repoblar árbol
             for item in self.tree_req.get_children(): self.tree_req.delete(item)
+            
             for req in self.requirements:
+                # Usar .get() para compatibilidad con archivos viejos
+                sat_rule = req.get('saturday_rule', 'Puede') 
                 self.tree_req.insert("", tk.END, values=(
                     req['subject'], req['teacher'], req['group'], 
-                    req['sessions'], req['duration']
+                    req['sessions'], req['duration'], sat_rule
                 ))
-        except Exception: pass
 
+            # --- RECUPERACIÓN DE LA MATRIZ (HORARIO) ---
+            allocations = state.get("allocations", [])
+            if allocations and self.data['Salones']:
+                # 1. Inicializar el motor silenciosamente
+                if not self.scheduler_engine:
+                    self.scheduler_engine = AutoScheduler(self.data['Salones'])
+                
+                # 2. Re-inyectar las clases guardadas
+                # Es vital usar _place_class para que se marquen ocupados los maestros/grupos
+                count = 0
+                for alloc in allocations:
+                    day = alloc['day']
+                    time = alloc['time']
+                    room = alloc['room']
+                    cell_data = alloc['data']
+                    
+                    # Generamos una llave única para el rastreo interno
+                    subj_key = f"{cell_data['subject']}_{cell_data['group']}"
+                    
+                    # Intentamos colocarla (sin validación estricta para asegurar restauración)
+                    # O usamos _place_class directamente confiando en que el guardado era válido
+                    try:
+                        self.scheduler_engine._place_class(day, time, room, cell_data, subj_key)
+                        count += 1
+                    except Exception:
+                        pass # Si falla una, seguimos con las demás
+                
+                if count > 0:
+                    print(f"Horario restaurado: {count} bloques recuperados.")
+                    # Habilitar la pestaña visual si hay datos
+                    self.notebook.select(self.visual_frame)
+                    self.render_visual_notebook()
+
+        except Exception as e:
+            print(f"Error cargando estado: {e}")
     # --- UTILS ---
     def show_format_help(self):
         messagebox.showinfo("Ayuda", "Hojas Excel:\n'Salones', 'Maestros', 'Grupos', 'Materias'.")
@@ -157,6 +219,8 @@ class SchoolSchedulerApp:
 
         self.cb_vars = {k: tk.StringVar() for k in ["Maestros", "Materias", "Grupos"]}
         self.combos = {}
+        
+        # Agregamos columnas extras para Sábado
         for i, k in enumerate(["Materias", "Maestros", "Grupos"]):
             ttk.Label(ctrl_frame, text=k).grid(row=0, column=i, padx=5, sticky='w')
             cb = ttk.Combobox(ctrl_frame, textvariable=self.cb_vars[k], state="readonly", width=15)
@@ -169,25 +233,47 @@ class SchoolSchedulerApp:
         spin_sess.grid(row=1, column=3, padx=5)
         
         ttk.Label(ctrl_frame, text="Duración (h)").grid(row=0, column=4, padx=5)
-        spin_dur = ttk.Spinbox(ctrl_frame, values=(1, 2), width=5)
-        spin_dur.set(1)
+        spin_dur = ttk.Spinbox(ctrl_frame, values=(1, 2, 3, 4), width=5)
+        spin_dur.set(2) # [CHANGE] Default cambiado a 2
         spin_dur.grid(row=1, column=4, padx=5)
 
-        self.tree_req = ttk.Treeview(frame, columns=("Mat", "Prof", "Gpo", "Ses", "Dur"), show='headings', height=10)
-        for c in ("Mat", "Prof", "Gpo", "Ses", "Dur"): 
-            self.tree_req.heading(c, text=c); self.tree_req.column(c, width=100)
+        # [NEW] Selector de Sábado
+        ttk.Label(ctrl_frame, text="¿Sábado?").grid(row=0, column=5, padx=5)
+        self.var_sat = tk.StringVar(value="Puede")
+        cb_sat = ttk.Combobox(ctrl_frame, textvariable=self.var_sat, values=["Puede", "No", "Sí o sí"], state="readonly", width=8)
+        cb_sat.grid(row=1, column=5, padx=5)
+
+        # [CHANGE] Agregamos columna "Sab" al Treeview
+        columns = ("Mat", "Prof", "Gpo", "Ses", "Dur", "Sab")
+        self.tree_req = ttk.Treeview(frame, columns=columns, show='headings', height=10)
+        
+        widths = [100, 100, 100, 50, 50, 70]
+        for c, w in zip(columns, widths): 
+            self.tree_req.heading(c, text=c)
+            self.tree_req.column(c, width=w)
+        
         self.tree_req.pack(expand=True, fill='both', padx=10)
 
         def add_req():
             vals = {k: var.get() for k, var in self.cb_vars.items()}
             if all(vals.values()):
                 try:
-                    s = int(spin_sess.get()); d = int(spin_dur.get())
+                    s = int(spin_sess.get())
+                    d = int(spin_dur.get())
+                    sat_rule = self.var_sat.get() # Capturar regla
+                    
                     self.requirements.append({
-                        'subject': vals['Materias'], 'teacher': vals['Maestros'],
-                        'group': vals['Grupos'], 'sessions': s, 'duration': d
+                        'subject': vals['Materias'], 
+                        'teacher': vals['Maestros'],
+                        'group': vals['Grupos'], 
+                        'sessions': s, 
+                        'duration': d,
+                        'saturday_rule': sat_rule # Guardar regla
                     })
-                    self.tree_req.insert("", tk.END, values=(vals['Materias'], vals['Maestros'], vals['Grupos'], s, d))
+                    # Actualizar vista
+                    self.tree_req.insert("", tk.END, values=(
+                        vals['Materias'], vals['Maestros'], vals['Grupos'], s, d, sat_rule
+                    ))
                 except ValueError: pass
 
         def del_req():
@@ -198,11 +284,11 @@ class SchoolSchedulerApp:
                 self.tree_req.delete(sel[0])
 
         btn_frame = ttk.Frame(ctrl_frame)
-        btn_frame.grid(row=2, column=0, columnspan=5, pady=10)
+        btn_frame.grid(row=2, column=0, columnspan=6, pady=10)
         ttk.Button(btn_frame, text="➕ Agregar", command=add_req).pack(side='left', padx=10)
         ttk.Button(frame, text="🗑️ Eliminar", command=del_req).pack(pady=5)
-
-# En gui.py -> SchoolSchedulerApp
+        
+        
     def get_weekly_grid_for_entity(self, entity_type, entity_name):
         """
         Genera un DataFrame donde:
@@ -247,6 +333,7 @@ class SchoolSchedulerApp:
                 df_view.at[h, day] = cell
                 
         return df_view
+    
     def get_data_by_teacher_view(self, day):
         """
         Transforma la matriz [Horas x Salones] a [Horas x Maestros].
@@ -280,35 +367,41 @@ class SchoolSchedulerApp:
                         
         return df_teachers
     # --- PESTAÑA GENERAR ---
-    def create_run_tab(self):
-        frame = ttk.Frame(self.notebook)
-        self.notebook.add(frame, text="🚀 Generar")
-        ttk.Button(frame, text="CALCULAR HORARIO", command=self.run_logic).pack(expand=True, ipadx=20, ipady=20)
 
     def run_logic(self):
+        # ... validaciones iniciales ...
         if not self.data['Salones'] or not self.requirements:
-            messagebox.showerror("Error", "Faltan datos.")
-            return
+             messagebox.showerror("Error", "Faltan datos.")
+             return
 
         self.scheduler_engine = AutoScheduler(self.data['Salones'])
         flat_reqs = []
         for r in self.requirements:
+            sat_rule = r.get('saturday_rule', 'Puede')
             for _ in range(r['sessions']):
                 flat_reqs.append({
-                    'subject': r['subject'], 'teacher': r['teacher'],
-                    'group': r['group'], 'duration': r['duration']
+                    'subject': r['subject'], 
+                    'teacher': r['teacher'],
+                    'group': r['group'], 
+                    'duration': r['duration'],
+                    'saturday_rule': sat_rule # <--- PASAMOS LA REGLA AQUÍ
                 })
         
         success = self.scheduler_engine.generate_schedule(flat_reqs)
+        # ... resto de la función ...
         if success:
             messagebox.showinfo("Éxito", "Horario generado.")
             self.notebook.select(self.visual_frame)
+            self.render_visual_notebook()
         else:
-            messagebox.showwarning("Fallo", "No se pudo generar el horario.")
-
-    # --- PESTAÑA VISUAL ---
-# En gui.py -> SchoolSchedulerApp
-
+            messagebox.showwarning("Fallo", "No se pudo generar el horario con esas restricciones.")
+    
+    def execute_generation_sequence(self):
+        # Primero calcula (bloqueante)
+        self.run_logic()
+        # Solo cuando termine, repinta
+        self.render_visual_notebook()
+    
     def create_visual_tab(self):
         self.visual_frame = ttk.Frame(self.notebook)
         self.notebook.add(self.visual_frame, text="👁️ Horario Interactivo")
@@ -316,12 +409,14 @@ class SchoolSchedulerApp:
         # --- BARRA DE CONTROL ---
         tool = ttk.Frame(self.visual_frame)
         tool.pack(fill='x', padx=5, pady=5)
-        
+        ttk.Button(tool, text="CALCULAR HORARIO", command=self.execute_generation_sequence).pack(expand=True, ipadx=20, ipady=20)
+
         # Selector 1: MODO (¿Qué dimensión manda?)
         ttk.Label(tool, text="Modo:").pack(side='left', padx=2)
         self.viz_mode = tk.StringVar(value="General (Días)")
         cb_mode = ttk.Combobox(tool, textvariable=self.viz_mode, state="readonly", width=15,
-                               values=["General (Días)", "Por Salón", "Por Maestro"])
+                       values=["General (Días)", "Por Salón", "Por Maestro"])
+        ttk.Button(tool, text="🔄 Actualizar", command=self.render_visual_notebook).pack(side='left', padx=5)
         cb_mode.pack(side='left', padx=5)
         
         # Selector 2: OBJETO (¿Cuál salón o cuál maestro?)
@@ -365,22 +460,20 @@ class SchoolSchedulerApp:
         mode = self.viz_mode.get()
         target = self.viz_target.get()
 
-        # ESTRATEGIA A: VISTA GENERAL (Lo que ya tenías)
+        # ESTRATEGIA A: VISTA GENERAL (Días en las pestañas)
         if mode == "General (Días)":
             for day in self.scheduler_engine.days:
-                self.create_tab_grid(day, self.scheduler_engine.grid[day], is_weekly_view=False)
+                # [CHANGE] Pasamos 'day' como contexto explícito (tab_context)
+                self.create_tab_grid(day, self.scheduler_engine.grid[day], is_weekly_view=False, tab_context=day)
 
-        # ESTRATEGIA B: VISTA FILTRADA (La inversión)
+        # ESTRATEGIA B: VISTA FILTRADA (Entidad en la pestaña, Días en columnas)
         else:
             if not target: return
-            # 1. Obtenemos la data pivotada (Cols=Días, Rows=Horas)
             df_weekly = self.get_weekly_grid_for_entity(mode, target)
-            
-            # 2. Renderizamos una sola pestaña llamada como la entidad
-            self.create_tab_grid(f"Horario: {target}", df_weekly, is_weekly_view=True)
+            # [CHANGE] tab_context es la entidad (ej. nombre del maestro), pero las columnas serán los días
+            self.create_tab_grid(f"Horario: {target}", df_weekly, is_weekly_view=True, tab_context=target)
 
-    # Función auxiliar para no repetir código de creación de canvas
-    def create_tab_grid(self, tab_title, data_frame, is_weekly_view):
+    def create_tab_grid(self, tab_title, data_frame, is_weekly_view, tab_context):
         f_tab = ttk.Frame(self.days_notebook)
         self.days_notebook.add(f_tab, text=tab_title)
         
@@ -398,12 +491,12 @@ class SchoolSchedulerApp:
         scroll_h.grid(row=1, column=0, sticky="ew")
         f_tab.grid_rowconfigure(0, weight=1); f_tab.grid_columnconfigure(0, weight=1)
 
-        # Llamamos al renderizador de celdas
-        self.render_generic_grid(content, data_frame, is_weekly_view)
+        # Llamamos al renderizador pasando el contexto
+        self.render_generic_grid(content, data_frame, is_weekly_view, tab_context)
 
-    def render_generic_grid(self, parent, df, is_weekly_view):
+    def render_generic_grid(self, parent, df, is_weekly_view, tab_context):
         hours = list(df.index)
-        cols = list(df.columns) # Pueden ser Salones (modo general) o Días (modo semanal)
+        cols = list(df.columns) 
 
         # Encabezados
         tk.Label(parent, text="Hora", font=('Arial', 9, 'bold'), bg="#ccc", width=8).grid(row=0, column=0, padx=1, pady=1)
@@ -418,29 +511,320 @@ class SchoolSchedulerApp:
                 bg = "#c3e6cb" if cell else "white"
                 txt = "---"
                 
+                # Variables para identificar la celda única en la lógica del Scheduler
+                target_day = None
+                target_room = None
+
                 if cell:
-                    # Lógica de texto según la vista
+                    # Lógica de texto y recuperación de coordenadas reales
                     if is_weekly_view:
-                        # Si veo Días en columnas, quiero saber Salón (si veo maestro) o Materia/Grupo
+                        # VISTA SEMANAL: Las columnas (col) son Días.
+                        target_day = col 
+                        
                         if 'display_room' in cell: # Es vista Maestro
                             txt = f"{cell['subject']}\n{cell['group']}\n📍 {cell['display_room']}"
+                            target_room = cell['display_room']
                         else: # Es vista Salón
                             txt = f"{cell['subject']}\n({cell['teacher']})\n{cell['group']}"
+                            # En vista Salón, el salón es el contexto de la pestaña
+                            target_room = tab_context 
                     else:
-                        # Vista clásica
+                        # VISTA GENERAL: El contexto de la pestaña es el Día. La columna es el Salón.
                         txt = f"{cell['subject']}\n{cell['group']}"
+                        target_day = tab_context
+                        target_room = col
 
-                # Nota: Desactivamos el click en vista semanal para simplificar, 
-                # o tendrías que mapear el evento de borrado al día/salón correcto.
-                tk.Button(parent, text=txt, bg=bg, font=('Arial', 8), height=4, width=18, relief="flat").grid(row=i+1, column=j+1, padx=1, pady=1, sticky="nsew")
+                    # CREACIÓN DEL BOTÓN ACTIVO
+                    # Usamos partial para capturar el estado actual de h, target_day, target_room
+                    btn = tk.Button(
+                        parent, 
+                        text=txt, 
+                        bg=bg, 
+                        font=('Arial', 8), 
+                        height=4, 
+                        width=18, 
+                        relief="flat",
+                        # Aquí está la magia: Conectamos el clic a on_cell_click
+                        command=partial(self.on_cell_click, target_day, h, target_room)
+                    )
+                else:
+                    # Si no hay celda, un botón deshabilitado o label
+                    btn = tk.Label(parent, text="", bg="white", height=4, width=18)
+
+                btn.grid(row=i+1, column=j+1, padx=1, pady=1, sticky="nsew")          
                 
     def on_cell_click(self, day, time, room):
-        cell = self.scheduler_engine.grid[day].at[time, room]
+        if not self.scheduler_engine: return
+        try:
+            cell = self.scheduler_engine.grid[day].at[time, room]
+        except: return
         if not cell: return
-        if messagebox.askyesno("Eliminar", f"¿Borrar clase en {day} {time}:00?"):
-            self.scheduler_engine._remove_class(day, time, room, cell, f"{cell['subject']}_{cell['group']}")
-            self.render_visual_notebook()
 
+        # --- VENTANA EMERGENTE (EDITOR) ---
+        edit_win = tk.Toplevel(self.root)
+        edit_win.title(f"Editar: {cell['subject']}")
+        edit_win.geometry("650x650")
+        
+        # Estilos visuales rápidos
+        pad_opts = {'padx': 15, 'pady': 8}
+        
+        # 1. INFORMACIÓN ACTUAL
+        info_frame = ttk.LabelFrame(edit_win, text="Información Actual")
+        info_frame.pack(fill='x', **pad_opts)
+        
+        lbl_text = f"Materia: {cell['subject']}\nGrupo: {cell['group']}\nMaestro: {cell['teacher']}\nDuración: {cell['duration']}h"
+        ttk.Label(info_frame, text=lbl_text, font=('Arial', 10)).pack(anchor='w', padx=10)
+
+        # 2. ÁREA DE MODIFICACIÓN MANUAL
+        mod_frame = ttk.LabelFrame(edit_win, text="Mover / Cambiar")
+        mod_frame.pack(fill='x', **pad_opts)
+
+        # Selectores
+        vars_mod = {}
+        # Días
+        ttk.Label(mod_frame, text="Nuevo Día:").grid(row=0, column=0)
+        vars_mod['day'] = tk.StringVar(value=day)
+        cb_day = ttk.Combobox(mod_frame, textvariable=vars_mod['day'], values=self.scheduler_engine.days, state="readonly")
+        cb_day.grid(row=0, column=1)
+
+        # Horas
+        ttk.Label(mod_frame, text="Nueva Hora:").grid(row=1, column=0)
+        vars_mod['time'] = tk.IntVar(value=time)
+        cb_time = ttk.Combobox(mod_frame, textvariable=vars_mod['time'], values=self.scheduler_engine.hours, state="readonly")
+        cb_time.grid(row=1, column=1)
+
+        # Salones
+        ttk.Label(mod_frame, text="Nuevo Salón:").grid(row=2, column=0)
+        vars_mod['room'] = tk.StringVar(value=room)
+        cb_room = ttk.Combobox(mod_frame, textvariable=vars_mod['room'], values=self.data['Salones'], state="readonly")
+        cb_room.grid(row=2, column=1)
+        
+        # Maestro (Permitir cambio)
+        ttk.Label(mod_frame, text="Cambiar Maestro:").grid(row=3, column=0)
+        vars_mod['teacher'] = tk.StringVar(value=cell['teacher'])
+        cb_prof = ttk.Combobox(mod_frame, textvariable=vars_mod['teacher'], values=self.data['Maestros'], state="readonly")
+        cb_prof.grid(row=3, column=1)
+
+        # 3. SUGERENCIAS (Listbox)
+        sugg_frame = ttk.LabelFrame(edit_win, text="Sugerencias (Espacios Libres)")
+        sugg_frame.pack(fill='both', expand=True, **pad_opts)
+        
+        lb_sugg = tk.Listbox(sugg_frame, height=6)
+        lb_sugg.pack(fill='both', expand=True, side='left')
+        sb_sugg = ttk.Scrollbar(sugg_frame, orient="vertical", command=lb_sugg.yview)
+        sb_sugg.pack(fill='y', side='right')
+        lb_sugg.config(yscrollcommand=sb_sugg.set)
+
+        # Función para poblar sugerencias
+        def load_suggestions():
+            lb_sugg.delete(0, tk.END)
+            # Obtenemos alternativas para la configuración ACTUAL (sin cambios manuales aun)
+            alts = self.scheduler_engine.suggest_alternatives(
+                cell['duration'], vars_mod['teacher'].get(), cell['group'], f"{cell['subject']}_{cell['group']}"
+            )
+            if not alts:
+                lb_sugg.insert(tk.END, "No hay alternativas directas.")
+            for a in alts:
+                lb_sugg.insert(tk.END, a)
+
+        ttk.Button(sugg_frame, text="↻ Actualizar Sugerencias", command=load_suggestions).pack(anchor='n')
+        
+        # Si seleccionan una sugerencia, llenar los combos
+        def on_sugg_select(evt):
+            sel = lb_sugg.curselection()
+            if not sel: return
+            val = lb_sugg.get(sel[0]) # Ej: "Lunes 7:00 - Salón 101"
+            parts = val.split()
+            if len(parts) >= 4:
+                vars_mod['day'].set(parts[0])     # Lunes
+                vars_mod['time'].set(parts[1].split(':')[0]) # 7
+                # El salón es el resto del string después del guión
+                # "Lunes 7:00 - Salón 101" -> split " - " -> [part1, part2]
+                try:
+                    r_val = val.split(" - ")[1]
+                    vars_mod['room'].set(r_val)
+                except: pass
+
+        lb_sugg.bind('<<ListboxSelect>>', on_sugg_select)
+
+        # 4. BOTONES DE ACCIÓN
+        btn_frame = ttk.Frame(edit_win)
+        btn_frame.pack(fill='x', **pad_opts)
+
+        def apply_changes():
+            target_d = vars_mod['day'].get()
+            target_t = vars_mod['time'].get()
+            target_r = vars_mod['room'].get()
+            target_p = vars_mod['teacher'].get()
+            
+            # Caso 1: No hubo cambios
+            if target_d == day and target_t == time and target_r == room and target_p == cell['teacher']:
+                messagebox.showinfo("Info", "No realizaste cambios.", parent=edit_win)
+                return
+
+            # Caso 2: Intento de movimiento
+            # Primero quitamos la clase ORIGINAL para evaluar si cabe en el destino
+            subj_key = f"{cell['subject']}_{cell['group']}"
+            
+            # Hack: Creamos una copia del objeto clase con el nuevo maestro (si cambió)
+            new_class_obj = cell.copy()
+            new_class_obj['teacher'] = target_p
+            
+            # Borramos temporalmente
+            self.scheduler_engine._remove_class(day, time, room, cell, subj_key)
+            
+            # Verificamos si es seguro ponerla en el destino
+            if self.scheduler_engine._is_safe(target_d, target_t, target_r, target_p, cell['group'], cell['duration'], subj_key):
+                # Es seguro -> Colocar
+                self.scheduler_engine._place_class(target_d, target_t, target_r, new_class_obj, subj_key)
+                messagebox.showinfo("Éxito", "Clase movida correctamente.", parent=edit_win)
+                edit_win.destroy()
+                self.render_visual_notebook()
+            else:
+                # NO ES SEGURO -> Análisis de conflicto
+                conflict_type, conf_cell, conf_room = self.scheduler_engine.get_conflict_details(
+                    target_d, target_t, target_p, cell['group']
+                )
+                
+                # Regresamos la clase a su lugar original (Rollback)
+                self.scheduler_engine._place_class(day, time, room, cell, subj_key)
+                
+                msg = "No se puede mover aquí.\n"
+                if conflict_type == "Maestro":
+                    msg += f"El maestro {target_p} ya está ocupado en:\n{conf_room} con {conf_cell['subject']}."
+                    # Aquí implementas la lógica de "cambiar la otra clase"
+                    if messagebox.askyesno("Conflicto", msg + "\n\n¿Quieres intentar mover la OTRA clase (la que estorba)?", parent=edit_win):
+                        edit_win.destroy()
+                        # Recursividad: Abrimos el editor para la clase que estorba
+                        self.on_cell_click(target_d, target_t, conf_room)
+                elif conflict_type == "Grupo":
+                    msg += f"El grupo {cell['group']} ya tiene clase a esa hora."
+                    messagebox.showerror("Error", msg, parent=edit_win)
+                else:
+                    msg += "El salón está ocupado u otro conflicto."
+                    messagebox.showerror("Error", msg, parent=edit_win)
+
+        def delete_class():
+            if messagebox.askyesno("Confirmar", "¿Eliminar clase permanentemente?", parent=edit_win):
+                subj_key = f"{cell['subject']}_{cell['group']}"
+                self.scheduler_engine._remove_class(day, time, room, cell, subj_key)
+                edit_win.destroy()
+                self.render_visual_notebook()
+
+        ttk.Button(btn_frame, text="💾 Aplicar Cambios", command=apply_changes).pack(side='right', padx=5)
+        ttk.Button(btn_frame, text="🗑️ Eliminar Clase", command=delete_class).pack(side='left', padx=5)
+        
+        # Cargar sugerencias iniciales
+        load_suggestions()
+
+
+    def open_add_menu(self, day, time, room):
+        # Ventana modal pequeña
+        win = Toplevel(self.root)
+        win.title(f"Agregar: {day} {time}:00 - {room}")
+        win.geometry("300x250")
+        
+        ttk.Label(win, text="Materia:").pack(pady=2)
+        v_mat = ttk.Combobox(win, values=self.data['Materias']); v_mat.pack()
+        
+        ttk.Label(win, text="Maestro:").pack(pady=2)
+        v_prof = ttk.Combobox(win, values=self.data['Maestros']); v_prof.pack()
+        
+        ttk.Label(win, text="Grupo:").pack(pady=2)
+        v_gpo = ttk.Combobox(win, values=self.data['Grupos']); v_gpo.pack()
+        
+        ttk.Label(win, text="Duración:").pack(pady=2)
+        v_dur = ttk.Spinbox(win, from_=1, to=3, width=5); v_dur.set(1); v_dur.pack()
+
+        def confirm():
+            cls = {
+                'subject': v_mat.get(), 'teacher': v_prof.get(),
+                'group': v_gpo.get(), 'duration': int(v_dur.get())
+            }
+            if not all([cls['subject'], cls['teacher'], cls['group']]): return
+            
+            # Intentar colocar (Check safety manually first or force it)
+            subj_key = f"{cls['subject']}_{cls['group']}"
+            if self.scheduler_engine._is_safe(day, time, room, cls['teacher'], cls['group'], cls['duration'], subj_key):
+                self.scheduler_engine._place_class(day, time, room, cls, subj_key)
+                self.render_visual_notebook()
+                win.destroy()
+            else:
+                messagebox.showerror("Conflicto", "No se puede colocar aquí (Choque de horario/profe/grupo).")
+
+        ttk.Button(win, text="💾 Guardar", command=confirm).pack(pady=10)
+
+    # --- MENÚ DE ACCIONES (Celda Llena) ---
+    def open_action_menu(self, day, time, room, cell_data):
+        win = Toplevel(self.root)
+        win.title(f"Gestión: {cell_data['subject']}")
+        win.geometry("350x300")
+        
+        lbl_info = f"{cell_data['subject']}\n{cell_data['teacher']}\n{cell_data['group']}"
+        tk.Label(win, text=lbl_info, font=("Arial", 10, "bold"), bg="#ddd", padx=10, pady=5).pack(fill='x', pady=5)
+
+        # 1. MODIFICAR (Simple: Borra y abre Add Menu)
+        def action_edit():
+            self.action_delete(day, time, room, cell_data, ask=False) # Borrar sin preguntar
+            win.destroy()
+            self.open_add_menu(day, time, room) # Abrir menú de agregar
+            
+        # 2. BORRAR
+        def action_delete_wrapper():
+            if messagebox.askyesno("Confirmar", "¿Eliminar esta clase?"):
+                self.action_delete(day, time, room, cell_data)
+                win.destroy()
+
+        # 3. SMART MOVE (El Cerebro)
+        def action_smart_move():
+            suggestions = self.scheduler_engine.suggest_alternatives(cell_data, day, time, room)
+            
+            if not suggestions:
+                messagebox.showinfo("Turing Analysis", "No hay movimientos eficientes disponibles.")
+                return
+            
+            # UI para seleccionar vector
+            move_win = Toplevel(win)
+            move_win.title("Vectores de Optimización")
+            
+            tk.Label(move_win, text="Selecciona la mejor opción:").pack()
+            
+            lb = tk.Listbox(move_win, width=50, height=5)
+            lb.pack(padx=10, pady=10)
+            
+            for s in suggestions:
+                score_desc = "⭐" * int(s['score']/10)
+                lb.insert(tk.END, f"{s['day']} {s['time']}:00 en {s['room']} (Efic.: {s['score']})")
+                
+            def execute_move():
+                sel = lb.curselection()
+                if not sel: return
+                target = suggestions[sel[0]]
+                
+                # Ejecutar movimiento: Borrar origen -> Poner destino
+                self.action_delete(day, time, room, cell_data, ask=False)
+                
+                subj_key = f"{cell_data['subject']}_{cell_data['group']}"
+                self.scheduler_engine._place_class(target['day'], target['time'], target['room'], cell_data, subj_key)
+                
+                self.render_visual_notebook()
+                move_win.destroy()
+                win.destroy()
+                messagebox.showinfo("Éxito", "Clase reubicada estratégicamente.")
+
+            ttk.Button(move_win, text="Proceder", command=execute_move).pack(pady=5)
+
+        # Botonera
+        ttk.Button(win, text="✏️ Modificar Datos", command=action_edit).pack(fill='x', padx=20, pady=2)
+        ttk.Button(win, text="🧠 Desplazamiento Inteligente", command=action_smart_move).pack(fill='x', padx=20, pady=2)
+        ttk.Button(win, text="🗑️ Eliminar Clase", command=action_delete_wrapper).pack(fill='x', padx=20, pady=15)
+
+    def action_delete(self, day, time, room, cell_data, ask=True):
+        # Wrapper auxiliar para la lógica de borrado
+        subj_key = f"{cell_data['subject']}_{cell_data['group']}"
+        self.scheduler_engine._remove_class(day, time, room, cell_data, subj_key)
+        self.render_visual_notebook()
+        
     def export_excel(self):
         if not self.scheduler_engine: return
         fname = filedialog.asksaveasfilename(defaultextension=".xlsx")

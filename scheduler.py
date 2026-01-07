@@ -70,6 +70,8 @@ class AutoScheduler:
             if day in self.subject_days[subject_key]:
                 self.subject_days[subject_key].remove(day)
 
+    # En scheduler.py -> AutoScheduler
+
     def solve_backtracking(self, classes_to_schedule):
         if not classes_to_schedule:
             return True
@@ -81,19 +83,35 @@ class AutoScheduler:
         group = current_block['group']
         duration = current_block['duration']
         subj_key = f"{current_block['subject']}_{group}"
+        
+        # [NEW] Leemos la regla de sábado (default "Puede" por seguridad)
+        sat_rule = current_block.get('saturday_rule', 'Puede')
 
         # Heurística: Intentar días no usados primero
         used_days = self.subject_days.get(subj_key, set())
-        all_days = self.days.copy()
-        random.shuffle(all_days)
-        all_days.sort(key=lambda d: 1 if d in used_days else 0)
+        
+        # [LOGIC CHANGE] Filtrado de días según la regla
+        candidate_days = []
+        
+        if sat_rule == "No":
+            # Excluimos Sábado
+            candidate_days = [d for d in self.days if d != "Sábado"]
+        elif sat_rule == "Sí o sí":
+            # SOLO Sábado
+            candidate_days = ["Sábado"]
+        else:
+            # Todos los días ("Puede")
+            candidate_days = self.days.copy()
+
+        # Mezclamos y ordenamos según uso previo (heurística estándar)
+        random.shuffle(candidate_days)
+        candidate_days.sort(key=lambda d: 1 if d in used_days else 0)
 
         shuffled_rooms = self.rooms.copy()
         random.shuffle(shuffled_rooms)
 
-        for day in all_days:
+        for day in candidate_days:
             for time in self.hours:
-                # Si dura 2 horas y son las 20:00, no cabe.
                 if duration == 2 and time == 20: continue 
 
                 for room in shuffled_rooms:
@@ -128,7 +146,53 @@ class AutoScheduler:
 
         return self.solve_backtracking(sorted_classes)
 
+    # En scheduler.py -> AutoScheduler
+
+    def get_conflict_details(self, day, time, teacher, group):
+        """Devuelve qué clase está estorbando en ese slot (si existe)."""
+        # 1. Revisar si hay choque de maestro
+        if (day, time, teacher) in self.teacher_busy:
+            # Buscar manualmente en la grilla dónde está ese maestro
+            # (Esto es ineficiente en O(N), pero aceptable para una interacción humana)
+            for r in self.rooms:
+                cell = self.grid[day].at[time, r]
+                if cell and cell['teacher'] == teacher:
+                    return "Maestro", cell, r
+        
+        # 2. Revisar si hay choque de grupo
+        if (day, time, group) in self.group_busy:
+            for r in self.rooms:
+                cell = self.grid[day].at[time, r]
+                if cell and cell['group'] == group:
+                    return "Grupo", cell, r
+                    
+        return None, None, None
+
+    def suggest_alternatives(self, duration, teacher, group, subject_key):
+        """Busca todos los slots vacíos donde esta configuración cabe perfectamente."""
+        alternatives = []
+        
+        # Para sugerir, ignoramos temporalmente las restricciones de la clase ACTUAL
+        # (Asumimos que la estamos moviendo, así que su lugar actual no cuenta como ocupado)
+        # Nota: Esto es una simplificación. Lo ideal es quitarla, buscar y volver a ponerla si falla.
+        # Por seguridad, buscamos espacios que sean válidos ADEMÁS del actual.
+        
+        for d in self.days:
+            for h in self.hours:
+                # Filtrar horarios imposibles por duración
+                if h + duration - 1 > 20: continue
+                
+                # Revisar cada salón
+                for r in self.rooms:
+                    # Usamos _is_safe. OJO: Si el maestro ya tiene clase en este slot (y no es esta misma),
+                    # dará False, lo cual es correcto (no es una alternativa válida inmediata).
+                    if self._is_safe(d, h, r, teacher, group, duration, "probe"):
+                        alternatives.append(f"{d} {h}:00 - {r}")
+        
+        return alternatives
+
     def export_excel(self, filename="horario_generado.xlsx"):
+        
         try:
             with pd.ExcelWriter(filename) as writer:
                 for day in self.days:
