@@ -5,7 +5,7 @@ import copy
 class AutoScheduler:
     def __init__(self, rooms):
         self.rooms = rooms
-        self.days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
+        self.days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
         self.hours = list(range(7, 21)) # 7 a 20
         
         # Grid 3D: { Día: DataFrame(Filas=Horas, Cols=Salones) }
