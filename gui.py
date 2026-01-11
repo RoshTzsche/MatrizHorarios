@@ -225,7 +225,7 @@ class SchoolSchedulerApp:
         parent.add(frame, text=category)
         
         # Panel de entrada
-        input_frame = ttk.LabelFrame(frame, text=f"Nuevo {category[:-1]}") # Truco: Materias -> Materia
+        input_frame = ttk.LabelFrame(frame, text=f"Nuevo {category[:-1]}") 
         input_frame.pack(fill='x', padx=20, pady=10)
         
         # Entrada de texto (Nombre)
@@ -234,20 +234,17 @@ class SchoolSchedulerApp:
         entry.pack(side='left', padx=5)
         
         # --- LÓGICA ESPECIAL PARA MATERIAS ---
-        self.current_color = "#3498db" # Azul por defecto
-        btn_color = None # Variable placeholder
+        self.current_color = "#3498db" 
+        btn_color = None 
         
         if category == "Materias":
-            # Función para abrir el selector
             def pick_color():
-                # colorchooser devuelve ((r,g,b), "#hex")
                 color = colorchooser.askcolor(title="Color de Materia", color=self.current_color)
-                if color[1]: # Si no canceló
+                if color[1]: 
                     self.current_color = color[1]
-                    btn_color.config(bg=self.current_color) # Actualizar visualmente el botón
+                    btn_color.config(bg=self.current_color) 
 
             ttk.Label(input_frame, text="Color:").pack(side='left', padx=5)
-            # Usamos tk.Button normal para poder cambiar el background
             btn_color = tk.Button(input_frame, text="🎨", width=3, bg=self.current_color, command=pick_color)
             btn_color.pack(side='left', padx=5)
 
@@ -256,26 +253,29 @@ class SchoolSchedulerApp:
         lb.pack(expand=True, fill='both', padx=20, pady=10)
         self.listboxes[category] = lb
         
-        # --- FUNCIÓN AGREGAR MEJORADA ---
-        def add():
+        # --- [CAMBIO 1] FUNCIÓN AGREGAR QUE ACEPTA EVENTOS ---
+        # Añadimos 'event=None' para que funcione tanto con Clic (sin evento) como con Enter (con evento)
+        def add(event=None):
             v = entry.get().strip()
             if v and v not in self.data[category]:
                 self.data[category].append(v)
                 lb.insert(tk.END, v)
                 
-                # Si es Materia, guardamos su color y pintamos la lista
+                # Si es Materia, guardamos su color
                 if category == "Materias":
                     self.subject_colors[v] = self.current_color
-                    
                     text_col = self._get_contrast_text_color(self.current_color)
-                    # Pintar el item en el Listbox para feedback visual inmediato
                     idx = lb.size() - 1
                     lb.itemconfig(idx, {'bg': self.current_color, 'fg':text_col, 'selectbackground': self.current_color, 'selectforeground': text_col})
-                    # Resetear color al default para la siguiente
+                    
                     self.current_color = "#3498db" 
                     btn_color.config(bg=self.current_color)
 
                 entry.delete(0, tk.END)
+
+        # --- [CAMBIO 2] VINCULAR LA TECLA ENTER ---
+        # Le decimos al entry: "Cuando te presionen Enter (<Return>), ejecuta add"
+        entry.bind('<Return>', add)
 
         def delete():
             sel = lb.curselection()
@@ -283,16 +283,16 @@ class SchoolSchedulerApp:
                 val = lb.get(sel[0])
                 self.data[category].remove(val)
                 lb.delete(sel[0])
-                # Limpiar también del diccionario de colores si es materia
                 if category == "Materias" and val in self.subject_colors:
                     del self.subject_colors[val]
 
         # Botonera de acción
         btn_frame = ttk.Frame(frame)
         btn_frame.pack(pady=10)
+        
+        # El botón sigue funcionando igual
         ttk.Button(btn_frame, text="➕ Agregar", command=add).pack(side='left', padx=10)
         ttk.Button(btn_frame, text="🗑️ Eliminar Seleccionado", command=delete).pack(side='left', padx=10)
-
     # --- PERSISTENCIA ---
     def save_state(self):
         # 1. Capturar asignaciones actuales si existe el motor
