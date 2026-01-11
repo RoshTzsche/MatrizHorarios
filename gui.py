@@ -1,12 +1,14 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, simpledialog, Toplevel
+from tkinter import ttk, messagebox, filedialog, simpledialog, Toplevel, colorchooser
 import pandas as pd
 import json
 import ctypes
 import platform
 import os
 from scheduler import AutoScheduler 
-from functools import partial 
+from functools import partial
+from PIL import Image, ImageTk
+
 
 class SchoolSchedulerApp:
     def __init__(self, root):
@@ -14,7 +16,6 @@ class SchoolSchedulerApp:
 
         self.scale_factor = self._configurar_dpi()
 
-        self.root.title("Gestor de Horarios Modular")
         screen_w = self.root.winfo_screenwidth()
         screen_h = self.root.winfo_screenheight()
             
@@ -22,11 +23,15 @@ class SchoolSchedulerApp:
         h = int(screen_h * 0.8)
         
         self.root.geometry(f"{w}x{h}")
-
+        self._configurar_estilos() # Definir colores
+        self._crear_header()       # Poner la barra superior
+        
+        self.root.title("Gestor de Horarios Modular - UJED _ Escuela de Psicología")
         self.db_file = "database.json"
         self.data = {
             "Salones": [], "Maestros": [], "Grupos": [], "Materias": []
         }
+        self.subject_colors = {} 
         self.requirements = [] 
         self.listboxes = {}
 
@@ -55,6 +60,118 @@ class SchoolSchedulerApp:
         self.create_visual_tab()
 
         self.load_state()
+
+    def _configurar_estilos(self):
+        style = ttk.Style()
+        
+        # 'clam' es un tema versátil que obedece bien a los colores personalizados en Linux/Windows
+        style.theme_use('clam')
+        
+        # --- PALETA DE COLORES (Professional Dark/Light Mix) ---
+        primary_dark = "#2c3e50"    # Azul pizarra oscuro (Encabezados)
+        accent_color = "#27ae60"    # Verde esmeralda (Botones acción)
+        bg_light = "#ecf0f1"        # Gris muy claro (Fondos)
+        text_dark = "#2c3e50"       # Texto principal
+        
+        # --- CONFIGURACIÓN GENERAL ---
+        # Configuramos todos los Frames y Labels para que tengan el fondo claro homogéneo
+        style.configure("TFrame", background=bg_light)
+        style.configure("TLabel", background=bg_light, foreground=text_dark, font=("Segoe UI", 10))
+        style.configure("TLabelframe", background=bg_light, foreground=text_dark)
+        style.configure("TLabelframe.Label", background=bg_light, foreground=primary_dark, font=("Segoe UI", 10, "bold"))
+        
+        # --- BOTONES ---
+        # Botón Normal
+        style.configure("TButton", 
+                        font=("Segoe UI", 9), 
+                        padding=6, 
+                        relief="flat",
+                        background="#bdc3c7",
+                        foreground="black")
+        
+        # Efecto Hover (cuando pasas el mouse)
+        style.map("TButton", background=[("active", "#95a5a6")])
+
+        # Botón de Acción (Guardar/Calcular) - Estilo Personalizado
+        style.configure("Accent.TButton", 
+                        font=("Segoe UI", 10, "bold"), 
+                        background=accent_color, 
+                        foreground="white")
+        style.map("Accent.TButton", background=[("active", "#219150")])
+
+        # --- TREEVIEW (Tablas) ---
+        style.configure("Treeview", 
+                        background="white",
+                        foreground="black", 
+                        rowheight=25,
+                        fieldbackground="white")
+        style.map("Treeview", background=[("selected", primary_dark)])
+        
+        # Encabezados de la tabla
+        style.configure("Treeview.Heading", 
+                        font=("Segoe UI", 9, "bold"), 
+                        background="#bdc3c7", 
+                        foreground="black")
+
+        # --- PESTAÑAS (Notebook) ---
+        style.configure("TNotebook", background=bg_light)
+        style.configure("TNotebook.Tab", padding=[10, 5], font=("Segoe UI", 10))
+        
+        # Guardamos colores en self para usarlos en widgets no-ttk (como Canvas o tk.Frame)
+        self.colors = {
+            "primary": primary_dark,
+            "bg": bg_light,
+            "accent": accent_color,
+            "text": text_dark
+        }
+        
+        # Configurar el fondo de la ventana raíz
+        self.root.configure(bg=bg_light)
+
+
+    def _crear_header(self):
+        # Frame superior oscuro (Tkinter nativo para controlar el color de fondo exacto sin bordes)
+        header = tk.Frame(self.root, bg=self.colors["primary"], height=80)
+        header.pack(side="top", fill="x")
+        
+        # --- LOGO (Izquierda) ---
+        # Asegúrate de tener una imagen 'logo.png' en tu carpeta o usa un try/except
+        try:
+            # Cargar y redimensionar imagen con alta calidad
+            load = Image.open("logo.png") 
+            # Redimensionar proporcionalmente (ej. 60px de alto)
+            aspect = load.width / load.height
+            load = load.resize((int(60 * aspect), 60), Image.Resampling.LANCZOS)
+            self.logo_img = ImageTk.PhotoImage(load) # Guardar referencia en self para que no la borre el recolector de basura
+            
+            lbl_logo = tk.Label(header, image=self.logo_img, bg=self.colors["primary"])
+            lbl_logo.pack(side="left", padx=20, pady=10)
+        except Exception as e:
+            # Si no hay imagen, ponemos un texto placeholder
+            tk.Label(header, text="🏛️ UDLAP", font=("Arial", 20, "bold"), 
+                     bg=self.colors["primary"], fg="white").pack(side="left", padx=20)
+
+        # --- TÍTULO (Centro/Izquierda) ---
+        title_frame = tk.Frame(header, bg=self.colors["primary"])
+        title_frame.pack(side="left", padx=10)
+        
+        tk.Label(title_frame, text="Sistema de Gestión de Horarios", 
+                 font=("Segoe UI", 18, "bold"), bg=self.colors["primary"], fg="white").pack(anchor="w")
+        
+        tk.Label(title_frame, text="Optimización Inteligente de Recursos", 
+                 font=("Segoe UI", 10, "italic"), bg=self.colors["primary"], fg="#bdc3c7").pack(anchor="w")
+
+        # --- TU FIRMA (Derecha) ---
+        # Frame para alinear a la derecha
+        right_frame = tk.Frame(header, bg=self.colors["primary"])
+        right_frame.pack(side="right", padx=20)
+        
+        tk.Label(right_frame, text="Desarrollado por:", 
+                 font=("Segoe UI", 8), bg=self.colors["primary"], fg="#bdc3c7").pack(anchor="e")
+        
+        tk.Label(right_frame, text="Rosh", 
+                 font=("Segoe UI", 14, "bold"), bg=self.colors["primary"], fg=self.colors["accent"]).pack(anchor="e")
+
 
     def _configurar_dpi(self):
         """
@@ -102,34 +219,79 @@ class SchoolSchedulerApp:
         for var_name in ["Salones", "Maestros", "Grupos", "Materias"]:
             self.create_crud_tab(var_name, parent=self.catalogs_notebook)
 
+
     def create_crud_tab(self, category, parent):
         frame = ttk.Frame(parent)
         parent.add(frame, text=category)
         
-        input_frame = ttk.Frame(frame)
+        # Panel de entrada
+        input_frame = ttk.LabelFrame(frame, text=f"Nuevo {category[:-1]}") # Truco: Materias -> Materia
         input_frame.pack(fill='x', padx=20, pady=10)
-        entry = ttk.Entry(input_frame)
-        entry.pack(side='left', expand=True, fill='x')
         
-        lb = tk.Listbox(frame, height=15)
-        lb.pack(expand=True, fill='both', padx=20, pady=5)
+        # Entrada de texto (Nombre)
+        ttk.Label(input_frame, text="Nombre:").pack(side='left', padx=5)
+        entry = ttk.Entry(input_frame, width=25)
+        entry.pack(side='left', padx=5)
+        
+        # --- LÓGICA ESPECIAL PARA MATERIAS ---
+        self.current_color = "#3498db" # Azul por defecto
+        btn_color = None # Variable placeholder
+        
+        if category == "Materias":
+            # Función para abrir el selector
+            def pick_color():
+                # colorchooser devuelve ((r,g,b), "#hex")
+                color = colorchooser.askcolor(title="Color de Materia", color=self.current_color)
+                if color[1]: # Si no canceló
+                    self.current_color = color[1]
+                    btn_color.config(bg=self.current_color) # Actualizar visualmente el botón
+
+            ttk.Label(input_frame, text="Color:").pack(side='left', padx=5)
+            # Usamos tk.Button normal para poder cambiar el background
+            btn_color = tk.Button(input_frame, text="🎨", width=3, bg=self.current_color, command=pick_color)
+            btn_color.pack(side='left', padx=5)
+
+        # Listbox para ver los existentes
+        lb = tk.Listbox(frame, height=12)
+        lb.pack(expand=True, fill='both', padx=20, pady=10)
         self.listboxes[category] = lb
         
+        # --- FUNCIÓN AGREGAR MEJORADA ---
         def add():
             v = entry.get().strip()
             if v and v not in self.data[category]:
                 self.data[category].append(v)
                 lb.insert(tk.END, v)
+                
+                # Si es Materia, guardamos su color y pintamos la lista
+                if category == "Materias":
+                    self.subject_colors[v] = self.current_color
+                    
+                    text_col = self._get_contrast_text_color(self.current_color)
+                    # Pintar el item en el Listbox para feedback visual inmediato
+                    idx = lb.size() - 1
+                    lb.itemconfig(idx, {'bg': self.current_color, 'fg':text_col, 'selectbackground': self.current_color, 'selectforeground': text_col})
+                    # Resetear color al default para la siguiente
+                    self.current_color = "#3498db" 
+                    btn_color.config(bg=self.current_color)
+
                 entry.delete(0, tk.END)
+
         def delete():
             sel = lb.curselection()
             if sel:
                 val = lb.get(sel[0])
                 self.data[category].remove(val)
                 lb.delete(sel[0])
+                # Limpiar también del diccionario de colores si es materia
+                if category == "Materias" and val in self.subject_colors:
+                    del self.subject_colors[val]
 
-        ttk.Button(input_frame, text="Agregar", command=add).pack(side='right', padx=5)
-        ttk.Button(frame, text="Eliminar Seleccionado", command=delete).pack(pady=5)
+        # Botonera de acción
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(pady=10)
+        ttk.Button(btn_frame, text="➕ Agregar", command=add).pack(side='left', padx=10)
+        ttk.Button(btn_frame, text="🗑️ Eliminar Seleccionado", command=delete).pack(side='left', padx=10)
 
     # --- PERSISTENCIA ---
     def save_state(self):
@@ -149,12 +311,12 @@ class SchoolSchedulerApp:
                                 'room': room,
                                 'data': cell # El objeto clase (maestro, materia, etc.)
                             })
-
         # 2. Estructura de guardado completa
         state = {
             "catalogs": self.data,
+            "subject_colors": self.subject_colors,
             "requirements": self.requirements,
-            "allocations": allocated_classes # <--- NUEVO CAMPO CRÍTICO
+            "allocations": allocated_classes 
         }
         
         try:
@@ -171,6 +333,7 @@ class SchoolSchedulerApp:
             with open(self.db_file, 'r', encoding='utf-8') as f:
                 state = json.load(f)
             self.data = state.get("catalogs", self.data)
+            self.subject_colors = state.get("sunject_colors", {})
             self.requirements = state.get("requirements", [])
             self.refresh_crud_views()
             
@@ -245,9 +408,22 @@ class SchoolSchedulerApp:
     def refresh_crud_views(self):
         for cat, lb in self.listboxes.items():
             lb.delete(0, tk.END)
-            for item in self.data[cat]: lb.insert(tk.END, item)
-        if hasattr(self, 'combos'):
-            for k, cb in self.combos.items(): cb['values'] = self.data[k]
+            for i, item in enumerate(self.data[cat]):
+                lb.insert(tk.END, item)
+                
+                # Si es materia, recuperamos su color y calculamos contraste
+                if cat == "Materias" and item in self.subject_colors:
+                    bg_c = self.subject_colors[item]
+                    fg_c = self._get_contrast_text_color(bg_c) # <--- CALCULO
+                    
+                    try:
+                        lb.itemconfig(i, {
+                            'bg': bg_c, 
+                            'fg': fg_c, # <--- APLICACION
+                            'selectbackground': bg_c,
+                            'selectforeground': fg_c
+                        })
+                    except: pass 
 
     def on_tab_change(self, event):
         tab_text = event.widget.tab(event.widget.select(), "text")
@@ -457,7 +633,7 @@ class SchoolSchedulerApp:
         # --- BARRA DE CONTROL ---
         tool = ttk.Frame(self.visual_frame)
         tool.pack(fill='x', padx=5, pady=5)
-        ttk.Button(tool, text="CALCULAR HORARIO", command=self.execute_generation_sequence).pack(expand=True, ipadx=20, ipady=20)
+        ttk.Button(tool, text="CALCULAR HORARIO", command=self.execute_generation_sequence, style="Accent.TButton").pack(expand=True, ipadx=20, ipady=10)
 
         # Selector 1: MODO (¿Qué dimensión manda?)
         ttk.Label(tool, text="Modo:").pack(side='left', padx=2)
@@ -546,73 +722,98 @@ class SchoolSchedulerApp:
         hours = list(df.index)
         cols = list(df.columns) 
 
-        # Encabezados
-        tk.Label(parent, text="Hora", font=('Arial', 9, 'bold'), bg="#ccc", width=8).grid(row=0, column=0, padx=1, pady=1)
-        for j, c in enumerate(cols):
-            # Ajustamos ancho visual por el factor de escala
-            w_col = int(18 * getattr(self, 'scale_factor', 1.0)) 
-            tk.Label(parent, text=c, font=('Arial', 9, 'bold'), bg="#ddd", width=20).grid(row=0, column=j+1, padx=1, pady=1)
+        # --- PALETA DE COLORES LOCAL (Para control total) ---
+        COLOR_HEADER_BG = "#34495e"  # Azul oscuro profesional
+        COLOR_HEADER_FG = "white"
+        
+        COLOR_TIME_BG   = "#ecf0f1"  # Gris muy claro para las horas
+        COLOR_TIME_FG   = "#2c3e50"
+        
+        COLOR_FREE_BG   = "white"
+        COLOR_FREE_FG   = "#95a5a6"  # Gris para el signo '+'
+        
+        COLOR_BUSY_BG   = "#27ae60"  # Verde esmeralda (Buen contraste con blanco)
+        COLOR_BUSY_FG   = "white"    # Texto blanco puro
+        
+        # ----------------------------------------------------
 
-        # Celdas
+        # Encabezados (Días o Salones)
+        # Usamos tk.Label estándar para poder forzar el background exacto
+        tk.Label(parent, text="Hora", font=('Segoe UI', 9, 'bold'), 
+                 bg=COLOR_HEADER_BG, fg=COLOR_HEADER_FG, width=8).grid(row=0, column=0, padx=1, pady=1, sticky="nsew")
+        
+        for j, c in enumerate(cols):
+            # Escalado del ancho
+            w_col = int(20 * getattr(self, 'scale_factor', 1.0)) 
+            tk.Label(parent, text=c, font=('Segoe UI', 9, 'bold'), 
+                     bg=COLOR_HEADER_BG, fg=COLOR_HEADER_FG, width=w_col).grid(row=0, column=j+1, padx=1, pady=1, sticky="nsew")
+
+        # Celdas del Grid
         for i, h in enumerate(hours):
-            tk.Label(parent, text=f"{h}:00", font=('Arial', 8, 'bold'), bg="#eee").grid(row=i+1, column=0, sticky="nsew", padx=1, pady=1)
+            # Columna de Hora (Izquierda)
+            tk.Label(parent, text=f"{h}:00", font=('Segoe UI', 8, 'bold'), 
+                     bg=COLOR_TIME_BG, fg=COLOR_TIME_FG).grid(row=i+1, column=0, sticky="nsew", padx=1, pady=1)
+            
             for j, col in enumerate(cols):
                 cell = df.at[h, col]
                 
-                # --- [CAMBIO CRÍTICO 1] ---
-                # Calculamos las coordenadas ANTES de decidir si pintamos botón lleno o vacío
+                # Cálculo de coordenadas (Igual que antes)
                 target_day = None
                 target_room = None
-                
                 if is_weekly_view:
-                    # VISTA SEMANAL: Columna = Día
                     target_day = col
-                    if cell and 'display_room' in cell:
-                        target_room = cell['display_room']
-                    else:
-                        target_room = tab_context # El contexto es el salón/maestro
+                    if cell and 'display_room' in cell: target_room = cell['display_room']
+                    else: target_room = tab_context 
                 else:
-                    # VISTA GENERAL: Contexto = Día, Columna = Salón
                     target_day = tab_context
                     target_room = col
 
-                # --- [CAMBIO CRÍTICO 2] ---
-                # Ahora decidimos el estilo, pero AMBOS casos llevan botón
-                
+                # --- LÓGICA VISUAL DE ALTO CONTRASTE ---
                 if cell:
                     # CASO OCUPADO
-                    bg = "#c3e6cb"
+                    subject_name = cell['subject']
+
+                    bg_color = self.subject_colors.get(subject_name, "#26ae60")
+                    fg_color = self._get_contrast_text_color(bg_color)
+                    relief = "raised"
+                    cursor = "hand2" # Manita al pasar el mouse
+                    
                     if is_weekly_view and 'display_room' in cell:
-                        txt = f"{cell['subject']}\n{cell['group']}\n📍 {cell['display_room']}"
+                        # Usamos emojis para guiar el ojo rápidamente
+                        txt = f"{cell['subject']}\nGroup: {cell['group']}\n📍 {cell['display_room']}"
                     else:
                         txt = f"{cell['subject']}\n{cell['group']}"
-                        
+                        if not is_weekly_view:
+                            # En vista general, añadimos el profe para referencia rápida
+                            txt += f"\n {cell['teacher']}"
+
                     cmd = partial(self.on_cell_click, target_day, h, target_room)
-                    state = "normal"
-                    relief = "raised"
                     
                 else:
-                    # CASO VACÍO (LIBRE)
-                    bg = "white"
-                    txt = "+" # Un indicativo sutil de que se puede agregar
-                    # Aquí conectamos el mismo evento click
+                    # CASO VACÍO
+                    bg_color = COLOR_FREE_BG
+                    fg_color = COLOR_FREE_FG
+                    relief = "flat"
+                    cursor = "arrow"
+                    txt = "+" 
                     cmd = partial(self.on_cell_click, target_day, h, target_room)
-                    state = "normal"
-                    relief = "flat" # Plano para que se vea limpio hasta que pases el mouse
 
-                # Renderizamos el BOTÓN (Ya no usamos Label para los vacíos)
+                # Renderizamos el BOTÓN
+                # Nota: Usamos 'wraplength' para que el texto largo no ensanche la celda infinitamente
                 btn = tk.Button(
                     parent, 
                     text=txt, 
-                    bg=bg, 
-                    font=('Arial', 8), 
-                    height=4, 
-                    width=18, 
+                    bg=bg_color, 
+                    fg=fg_color,        # <--- AQUÍ ESTÁ LA CLAVE DEL CONTRASTE
+                    font=('Segoe UI', 9), 
                     relief=relief,
-                    command=cmd # <--- ¡Aquí está la magia!
+                    cursor=cursor,
+                    borderwidth=0 if not cell else 2,
+                    wraplength=120,      # Auto-ajuste de texto si es muy largo
+                    activebackground="#2ecc71" if cell else "#f1f2f6", # Color al hacer click
+                    command=cmd
                 )
                 btn.grid(row=i+1, column=j+1, padx=1, pady=1, sticky="nsew")
-
     def on_cell_click(self, day, time, room):
         if not self.scheduler_engine: return
         try:
@@ -808,18 +1009,33 @@ class SchoolSchedulerApp:
         
         pad_opts = {'padx':15, 'pady':8}
 
-        ttk.Label(win, text="Materia:").pack(pady=2)
-        v_mat = ttk.Combobox(win, values=self.data['Materias']); v_mat.pack()
-        
-        ttk.Label(win, text="Maestro:").pack(pady=2)
-        v_prof = ttk.Combobox(win, values=self.data['Maestros']); v_prof.pack()
-        
-        ttk.Label(win, text="Grupo:").pack(pady=2)
-        v_gpo = ttk.Combobox(win, values=self.data['Grupos']); v_gpo.pack()
-        
-        ttk.Label(win, text="Duración:").pack(pady=2)
-        v_dur = ttk.Spinbox(win, from_=1, to=3, width=5); v_dur.set(1); v_dur.pack()
+        main_frame = ttk.LabelFrame(win, text="Detalles de Asignación")
+        main_frame.pack(fill="both", expand=True, padx=15, pady=15)
+        main_frame.columnconfigure(1, weight=1)
 
+        ttk.Label(main_frame, text="Materia:").grid(row=0, column=0, sticky='w', **pad_opts)
+        v_mat = ttk.Combobox(main_frame, values=self.data['Materias'], state="readonly")
+        v_mat.grid(row=0, column=1, sticky='ew', padx=(0, 10)) # sticky='ew' estira este-oeste
+
+        # Fila 1: Maestro
+        ttk.Label(main_frame, text="Maestro:").grid(row=1, column=0, sticky='w', **pad_opts)
+        v_prof = ttk.Combobox(main_frame, values=self.data['Maestros'], state="readonly")
+        v_prof.grid(row=1, column=1, sticky='ew', padx=(0, 10))
+
+        # Fila 2: Grupo
+        ttk.Label(main_frame, text="Grupo:").grid(row=2, column=0, sticky='w', **pad_opts)
+        v_gpo = ttk.Combobox(main_frame, values=self.data['Grupos'], state="readonly")
+        v_gpo.grid(row=2, column=1, sticky='ew', padx=(0, 10))
+
+        # Fila 3: Duración
+        ttk.Label(main_frame, text="Duración (h):").grid(row=3, column=0, sticky='w', **pad_opts)
+        v_dur = ttk.Spinbox(main_frame, from_=1, to=4, width=5)
+        v_dur.set(1)
+        v_dur.grid(row=3, column=1, sticky='w', padx=(0, 10)) # sticky='w' para que no sea gigante
+
+        # 4. ÁREA DE BOTONES (Fuera del grid de datos, abajo)
+        btn_frame = ttk.Frame(win)
+        btn_frame.pack(fill='x', padx=15, pady=10)
         def confirm():
             # 1. Capturamos lo que el usuario quiere crear
             cls = {
@@ -851,7 +1067,7 @@ class SchoolSchedulerApp:
                 )
                 
                 # Construcción del reporte de error
-                msg = f"⛔ NO SE PUEDE AGREGAR ({conflict_type})\n\n"
+                msg = f"NO SE PUEDE AGREGAR ({conflict_type})\n\n"
                 
                 if conflict_type == "Maestro":
                     msg += f"El maestro {cls['teacher']} ya está ocupado.\n"
@@ -880,8 +1096,8 @@ class SchoolSchedulerApp:
                     msg += "Conflicto desconocido (posible choque de duración múltiple o restricción externa)."
                 
                 messagebox.showerror("Choque de Horario", msg, parent=win)
-        ttk.Button(win, text="💾 Guardar", command=confirm).pack(pady=10)
-
+        ttk.Button(btn_frame, text="Guardar Asignación", command=confirm).pack(side='right', fill='x', expand=True)
+        ttk.Button(btn_frame, text="Cancelar", command=win.destroy).pack(side='left', padx=5)
     # --- MENÚ DE ACCIONES (Celda Llena) ---
     def open_action_menu(self, day, time, room, cell_data):
         win = Toplevel(self.root)
@@ -943,9 +1159,9 @@ class SchoolSchedulerApp:
             ttk.Button(move_win, text="Proceder", command=execute_move).pack(pady=5)
 
         # Botonera
-        ttk.Button(win, text="✏️ Modificar Datos", command=action_edit).pack(fill='x', padx=20, pady=2)
-        ttk.Button(win, text="🧠 Desplazamiento Inteligente", command=action_smart_move).pack(fill='x', padx=20, pady=2)
-        ttk.Button(win, text="🗑️ Eliminar Clase", command=action_delete_wrapper).pack(fill='x', padx=20, pady=15)
+        ttk.Button(win, text="Modificar Datos", command=action_edit).pack(fill='x', padx=20, pady=2)
+        ttk.Button(win, text="Desplazamiento Inteligente", command=action_smart_move).pack(fill='x', padx=20, pady=2)
+        ttk.Button(win, text="Eliminar Clase", command=action_delete_wrapper).pack(fill='x', padx=20, pady=15)
 
     def action_delete(self, day, time, room, cell_data, ask=True):
         # Wrapper auxiliar para la lógica de borrado
@@ -959,3 +1175,27 @@ class SchoolSchedulerApp:
         if fname:
             ok, msg = self.scheduler_engine.export_excel(fname)
             messagebox.showinfo("Exportar", msg)
+
+
+
+
+    def _get_contrast_text_color(self, hex_color):
+        """
+        Calcula si el texto debe ser blanco o negro basado en la luminancia del fondo.
+        Fórmula: L = 0.299R + 0.587G + 0.114B
+        """
+        if not hex_color or not hex_color.startswith('#'):
+            return "black" # Fallback por seguridad
+        
+        # 1. Convertir Hex (#RRGGBB) a decimales (R, G, B)
+        h = hex_color.lstrip('#')
+        try:
+            r, g, b = tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+            
+            # 2. Calcular Luminancia
+            luminance = (0.299 * r + 0.587 * g + 0.114 * b)
+            
+            # 3. Decisión (Umbral estándar 128)
+            return "black" if luminance > 128 else "white"
+        except ValueError:
+            return "black"
