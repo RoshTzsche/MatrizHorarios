@@ -374,12 +374,19 @@ class SchoolSchedulerApp:
                         count += 1
                     except Exception:
                         pass # Si falla una, seguimos con las demás
-                
+    
                 if count > 0:
                     print(f"Horario restaurado: {count} bloques recuperados.")
-                    # Habilitar la pestaña visual si hay datos
-                    self.notebook.select(self.visual_frame)
-                    self.render_visual_notebook()
+                    
+                    # [FIX] Verificar que la interfaz visual existe antes de cambiar de pestaña
+                    if hasattr(self, 'visual_frame') and self.visual_frame:
+                        try:
+                            self.notebook.select(self.visual_frame)
+                            self.render_visual_notebook()
+                        except Exception as gui_e:
+                            print(f"Datos cargados pero error actualizando GUI: {gui_e}")
+                    else:
+                        print("Datos cargados en memoria (La interfaz visual aún no estaba lista).")
 
         except Exception as e:
             print(f"Error cargando estado: {e}")
@@ -940,7 +947,20 @@ class SchoolSchedulerApp:
             cell = None
         if not cell:
             self.open_add_menu(day, time, room)
+            return
 
+
+        # --- [NUEVO] LÓGICA DE UNIFICACIÓN DE BLOQUE ---
+        # Si hice clic en la 3ra hora, quiero que 'time' se convierta en la 1ra hora.
+        real_start_time = self._get_block_start(day, time, room, cell)
+        
+        # Si hubo un cambio (ej. clickeaste a las 10 pero empieza a las 8)
+        if real_start_time != time:
+            print(f"Redirigiendo edición: {time}:00 -> {real_start_time}:00")
+            time = real_start_time
+            # Actualizamos la referencia de la celda a la celda "cabeza"
+            cell = self.scheduler_engine.grid[day].at[time, room]
+        # -----------------------------------------------
         # --- VENTANA EMERGENTE (EDITOR) ---
         edit_win = tk.Toplevel(self.root)
         edit_win.title(f"Editar: {cell['subject']}")
@@ -1068,42 +1088,52 @@ class SchoolSchedulerApp:
                     target_d, target_t, target_p, cell['group']
                 )
                 
-                # Rollback (Regresamos la clase original a su lugar por seguridad visual)
+                # Rollback (Regresamos la clase original)
                 self.scheduler_engine._place_class(day, time, room, cell, subj_key)
                 
-                # --- AQUÍ CONSTRUYES TU MENSAJE DETALLADO ---
-                msg = f"⛔ CONFLICTO DE {conflict_type.upper()}\n\n"
-                
-                if conflict_type == "Maestro":
-                    # Reto para ti: Usa f-strings para acceder a conf_cell['subject'] y conf_cell['group']
-                    msg += f"El maestro {target_p} no puede estar en dos lugares.\n"
-                    msg += f"ACTUALMENTE: Está dando '{conf_cell['subject']}'\n"
-                    msg += f"A QUIÉN: Grupo {conf_cell['group']}\n"
-                    msg += f"DÓNDE: Salón {conf_room}"
-                    
-                    # Tu lógica de sugerencia existente...
-                    if messagebox.askyesno("Conflicto de Maestro", msg + "\n\n¿Quieres ir al choque para intentar mover LA OTRA clase?"):
-                        edit_win.destroy()
-                        self.on_cell_click(target_d, target_t, conf_room)
-                    return # Importante retornar aquí para no mostrar el error genérico abajo
-
-                elif conflict_type == "Grupo":
-                    msg += f"El grupo {cell['group']} ya está ocupado a esta hora.\n"
-                    msg += f"MATERIA: {conf_cell['subject']}\n"
-                    msg += f"MAESTRO: {conf_cell['teacher']}\n"
-                    msg += f"SALÓN: {conf_room}"
-                    
-                elif conflict_type == "Salón":
-                    msg += f"El salón {target_r} ya está ocupado.\n"
-                    msg += f"POR: {conf_cell['subject']} ({conf_cell['group']})\n"
-                    msg += f"PROF: {conf_cell['teacher']}"
-
+                # --- [FIX] PROTECCIÓN CONTRA CONFLICTOS NULOS ---
+                if conflict_type is None:
+                    # Si el motor dice que hay choque pero no sabe cuál, asumimos uno genérico
+                    conflict_type = "Desconocido"
+                    msg = "⛔ NO SE PUEDE MOVER\n\n"
+                    msg += "El movimiento no es válido.\n"
+                    msg += "Posible causa: La clase excede el horario límite o hay un error de lógica."
                 else:
-                    msg += "Conflicto desconocido o capacidad excedida."
+                    # Lógica original, ahora segura porque conflict_type tiene texto
+                    msg = f"⛔ CONFLICTO DE {conflict_type.upper()}\n\n"
+                    
+                    if conflict_type == "Maestro":
+                        msg += f"El maestro {target_p} no puede estar en dos lugares.\n"
+                        # Aseguramos que conf_cell no sea None antes de leerlo
+                        if conf_cell:
+                            msg += f"ACTUALMENTE: Está dando '{conf_cell.get('subject','?')}'\n"
+                            msg += f"A QUIÉN: Grupo {conf_cell.get('group','?')}\n"
+                        msg += f"DÓNDE: Salón {conf_room}"
+                        
+                        # Tu lógica de sugerencia (si quieres mantenerla)
+                        if messagebox.askyesno("Conflicto de Maestro", msg + "\n\n¿Quieres ir al choque para intentar mover LA OTRA clase?"):
+                            edit_win.destroy()
+                            self.on_cell_click(target_d, target_t, conf_room)
+                        return 
+
+                    elif conflict_type == "Grupo":
+                        msg += f"El grupo {cell['group']} ya está ocupado a esta hora.\n"
+                        if conf_cell:
+                            msg += f"MATERIA: {conf_cell.get('subject','?')}\n"
+                            msg += f"MAESTRO: {conf_cell.get('teacher','?')}\n"
+                        msg += f"SALÓN: {conf_room}"
+                        
+                    elif conflict_type == "Salón":
+                        msg += f"El salón {target_r} ya está ocupado.\n"
+                        if conf_cell:
+                            msg += f"POR: {conf_cell.get('subject','?')} ({conf_cell.get('group','?')})\n"
+                            msg += f"PROF: {conf_cell.get('teacher','?')}"
+
+                    else:
+                        msg += "Capacidad excedida o restricción desconocida."
 
                 # Mostramos el mensaje final detallado
                 messagebox.showerror("No se pudo mover", msg, parent=edit_win)
-
 
         def delete_class():
             if messagebox.askyesno("Confirmar", "¿Eliminar clase permanentemente?", parent=edit_win):
@@ -1175,6 +1205,30 @@ class SchoolSchedulerApp:
             if self.scheduler_engine._is_safe(day, time, room, cls['teacher'], cls['group'], cls['duration'], subj_key):
                 # ES SEGURO -> Procedemos
                 self.scheduler_engine._place_class(day, time, room, cls, subj_key)
+                # --- [SYNC] NUEVO: ACTUALIZAR PESTAÑA DE CLASES ---
+                # 1. Agregar a la lista interna de requerimientos
+                new_req = {
+                    'subject': cls['subject'],
+                    'teacher': cls['teacher'],
+                    'group': cls['group'],
+                    'sessions': 1,            # Al ser manual, cuenta como 1 sesión
+                    'duration': cls['duration'],
+                    'saturday_rule': 'Manual' # Etiqueta para identificar que fue manual
+                }
+                self.requirements.append(new_req)
+                
+                # 2. Insertar visualmente en el Treeview (Tabla de Clases)
+                # (Mat, Prof, Gpo, Ses, Dur, Sab)
+                self.tree_req.insert("", tk.END, values=(
+                    cls['subject'], 
+                    cls['teacher'], 
+                    cls['group'], 
+                    1, 
+                    cls['duration'], 
+                    'Manual'
+                ))
+                # --------------------------------------------------
+
                 self.render_visual_notebook()
                 win.destroy() # Cerramos la ventanita
             else:
@@ -1317,3 +1371,45 @@ class SchoolSchedulerApp:
             return "black" if luminance > 128 else "white"
         except ValueError:
             return "black"
+
+    def _get_block_start(self, day, time, room, current_cell_data):
+        """
+        Algoritmo de Retroceso:
+        Busca hacia atrás en el tiempo para encontrar dónde inicia realmente este bloque de clase.
+        Retorna: La hora de inicio (int).
+        """
+        hours = self.scheduler_engine.hours
+        # Encontrar el índice actual en la lista de horas (ej. 7, 8, 9...)
+        try:
+            current_idx = hours.index(time)
+        except ValueError:
+            return time # Si la hora no está, no hacemos nada
+
+        start_time = time
+        
+        # Iteramos hacia atrás desde el índice actual - 1
+        for i in range(current_idx - 1, -1, -1):
+            prev_h = hours[i]
+            try:
+                # Inspeccionamos la celda anterior
+                prev_cell = self.scheduler_engine.grid[day].at[prev_h, room]
+                
+                # Criterio de Igualdad:
+                # Comparamos si la celda anterior tiene EXACTAMENTE los mismos datos críticos
+                if (prev_cell and 
+                    prev_cell['subject'] == current_cell_data['subject'] and
+                    prev_cell['group'] == current_cell_data['group'] and 
+                    prev_cell['teacher'] == current_cell_data['teacher']):
+                    
+                    # Si es igual, actualizamos nuestro candidato a inicio
+                    start_time = prev_h
+                else:
+                    # Si es diferente o está vacía, se rompe la cadena. 
+                    # Hemos encontrado el límite.
+                    break
+            except:
+                break
+                
+        return start_time
+
+
