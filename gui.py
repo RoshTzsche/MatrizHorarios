@@ -41,7 +41,7 @@ class SchoolSchedulerApp:
         file_menu.add_command(label="💾 Guardar Cambios (Ctrl+S)", command=self.save_state)
         file_menu.add_separator()
         file_menu.add_command(label="📥 Importar Excel", command=self.import_catalogs)
-        file_menu.add_command(label="❓ Ayuda", command=self.show_format_help)
+        file_menu.add_command(label="❓ Manual y Especificaciones", command=self.show_user_manual)
         menubar.add_cascade(label="Archivo", menu=file_menu)
         root.config(menu=menubar)
         root.bind('<Control-s>', lambda e: self.save_state())
@@ -57,9 +57,9 @@ class SchoolSchedulerApp:
         
         # 2. DEMÁS PESTAÑAS
         self.create_requirements_tab()
+        self.load_state()
         self.create_visual_tab()
 
-        self.load_state()
 
     def _configurar_estilos(self):
         style = ttk.Style()
@@ -138,17 +138,17 @@ class SchoolSchedulerApp:
         # Asegúrate de tener una imagen 'logo.png' en tu carpeta o usa un try/except
         try:
             # Cargar y redimensionar imagen con alta calidad
-            load = Image.open("logo.png") 
+            load = Image.open(resource_path("logo.png")) 
             # Redimensionar proporcionalmente (ej. 60px de alto)
             aspect = load.width / load.height
             load = load.resize((int(60 * aspect), 60), Image.Resampling.LANCZOS)
             self.logo_img = ImageTk.PhotoImage(load) # Guardar referencia en self para que no la borre el recolector de basura
             
             lbl_logo = tk.Label(header, image=self.logo_img, bg=self.colors["primary"])
-            lbl_logo.pack(side="left", padx=20, pady=10)
+            lbl_logo.pack(side="left", padx=30, pady=15)
         except Exception as e:
             # Si no hay imagen, ponemos un texto placeholder
-            tk.Label(header, text="🏛️ UDLAP", font=("Arial", 20, "bold"), 
+            tk.Label(header, text="Logo", font=("Arial", 20, "bold"), 
                      bg=self.colors["primary"], fg="white").pack(side="left", padx=20)
 
         # --- TÍTULO (Centro/Izquierda) ---
@@ -169,8 +169,8 @@ class SchoolSchedulerApp:
         tk.Label(right_frame, text="Desarrollado por:", 
                  font=("Segoe UI", 8), bg=self.colors["primary"], fg="#bdc3c7").pack(anchor="e")
         
-        tk.Label(right_frame, text="Rosh", 
-                 font=("Segoe UI", 14, "bold"), bg=self.colors["primary"], fg=self.colors["accent"]).pack(anchor="e")
+        tk.Label(right_frame, text="Rosh Guadiana", 
+                 font=("Segoe UI", 8, "bold"), bg=self.colors["primary"], fg=self.colors["accent"]).pack(anchor="e")
 
 
     def _configurar_dpi(self):
@@ -384,9 +384,80 @@ class SchoolSchedulerApp:
         except Exception as e:
             print(f"Error cargando estado: {e}")
     # --- UTILS ---
-    def show_format_help(self):
-        messagebox.showinfo("Ayuda", "Hojas Excel:\n'Salones', 'Maestros', 'Grupos', 'Materias'.")
+    def show_user_manual(self):
+        # --- VENTANA DE DOCUMENTACIÓN ---
+        doc_win = Toplevel(self.root)
+        doc_win.title("Manual de Usuario & Especificaciones")
+        doc_win.geometry("700x600")
+        
+        # Icono si existe
+        if hasattr(self, 'logo_img'):
+            tk.Label(doc_win, image=self.logo_img, bg="white").pack(side="top", pady=10)
 
+        # Widget de Texto con Scroll
+        from tkinter.scrolledtext import ScrolledText
+        
+        # Área de texto
+        txt = ScrolledText(doc_win, wrap=tk.WORD, font=("Segoe UI", 10), padx=20, pady=20)
+        txt.pack(expand=True, fill='both')
+        
+        # --- DEFINICIÓN DE ESTILOS DE TEXTO (TAGS) ---
+        txt.tag_config("h1", font=("Segoe UI", 16, "bold"), foreground=self.colors['primary'], spacing3=10)
+        txt.tag_config("h2", font=("Segoe UI", 12, "bold"), foreground=self.colors['accent'], spacing3=5)
+        txt.tag_config("bold", font=("Segoe UI", 10, "bold"))
+        txt.tag_config("highlight", background="#fff3cd", foreground="#856404") # Amarillo alerta
+        
+        # --- CONTENIDO DEL MANUAL ---
+        content = [
+            ("SISTEMA DE GESTIÓN DE HORARIOS\n", "h1"),
+            ("Versión 0.1 \n\n", "bold"),
+            
+            ("1. INTRODUCCIÓN\n", "h2"),
+            ("Este software es una solución integral para la orquestación de recursos académicos. Diseñado para optimizar la asignación de Aulas, Maestros y Grupos, eliminando conflictos mediante un motor lógico de detección en tiempo real.\n\n", "normal"),
+            
+            ("2. FLUJO DE TRABAJO (WORKFLOW)\n", "h2"),
+            ("Paso A: Carga de Catálogos\n", "bold"),
+            ("Diríjase a la pestaña 'Agregar Datos'. Ingrese los recursos base: Salones, Maestros (Profesores) y Grupos. \n", "normal"),
+            ("• Tip:", "bold"),
+            (" En la sección 'Materias', puede asignar un ", "normal"),
+            ("Código de Color Semántico", "highlight"),
+            (" haciendo clic en el botón de paleta 🎨. El sistema calculará automáticamente el contraste del texto (blanco/negro) para garantizar legibilidad.\n\n", "normal"),
+
+            ("Paso B: Definición de Clases\n", "bold"),
+            ("En la pestaña 'Clases', cree las relaciones lógicas. Ejemplo: 'Matemáticas' + 'Prof. X' + 'Grupo A'. Defina la duración y reglas especiales (ej. Sábados).\n\n", "normal"),
+            
+            ("Paso C: Visualización Interactiva\n", "bold"),
+            ("La pestaña 'Horario Interactivo' es el corazón del sistema. \n", "normal"),
+            ("• Matriz Inteligente:", "bold"),
+            (" Los espacios vacíos (+) permiten inserción rápida. Los espacios ocupados muestran detalles completos.\n", "normal"),
+            ("• Drag & Drop Lógico:", "bold"),
+            (" Al hacer clic en una clase existente, puede moverla a otro horario. El sistema validará colisiones instantáneamente.\n\n", "normal"),
+
+            ("3. CARACTERÍSTICAS TÉCNICAS\n", "h2"),
+            ("✅ Motor de Resolución de Conflictos:\n", "bold"),
+            ("El algoritmo 'Scheduler' previene colisiones de 3 tipos:\n - Maestro Ocupado (Ubicuidad)\n - Grupo Ocupado (Clases simultáneas)\n - Salón Ocupado (Sobrecarga de recurso)\nSi intenta una asignación ilegal, el sistema proveerá un análisis forense del conflicto.\n\n", "normal"),
+            
+            ("✅ Independencia de Resolución (DPI Aware):\n", "bold"),
+            ("Optimizado para pantallas QHD/4K (como Lenovo Legion). La interfaz escala matemáticamente vectores y fuentes para evitar el 'efecto borroso' de Windows/Linux.\n\n", "normal"),
+            
+            ("✅ Interfaz de Alto Contraste:\n", "bold"),
+            ("Implementación de la fórmula de luminancia (L = 0.299R + 0.587G + 0.114B) para ajustar dinámicamente el color de fuente según el fondo de la materia.\n\n", "normal"),
+            
+            ("✅ Arquitectura de Datos Persistente:\n", "bold"),
+            ("Base de datos local en JSON no relacional. Permite portabilidad total de la información sin requerir servidores SQL.\n\n", "normal"),
+            
+            ("Desarrollado por Rosh Guadiana Páez\n", "h2"),
+            ("https://github.com/RoshTzsche\n", "normal")
+        ]
+        
+        # --- RENDERIZADO ---
+        for text, tag in content:
+            txt.insert(tk.END, text, tag)
+            
+        txt.configure(state='disabled') # Hacerlo de solo lectura
+        
+        # Botón de cerrar
+        ttk.Button(doc_win, text="Entendido", command=doc_win.destroy, style="Accent.TButton").pack(pady=10)
     def import_catalogs(self):
         filename = filedialog.askopenfilename(filetypes=[("Excel", "*.xlsx")])
         if not filename: return
@@ -614,7 +685,6 @@ class SchoolSchedulerApp:
         success = self.scheduler_engine.generate_schedule(flat_reqs)
         # ... resto de la función ...
         if success:
-            messagebox.showinfo("Éxito", "Horario generado.")
             self.notebook.select(self.visual_frame)
             self.render_visual_notebook()
         else:
@@ -626,38 +696,86 @@ class SchoolSchedulerApp:
         # Solo cuando termine, repinta
         self.render_visual_notebook()
     
+
     def create_visual_tab(self):
         self.visual_frame = ttk.Frame(self.notebook)
         self.notebook.add(self.visual_frame, text="👁️ Horario Interactivo")
         
         # --- BARRA DE CONTROL ---
         tool = ttk.Frame(self.visual_frame)
-        tool.pack(fill='x', padx=5, pady=5)
-        ttk.Button(tool, text="CALCULAR HORARIO", command=self.execute_generation_sequence, style="Accent.TButton").pack(expand=True, ipadx=20, ipady=10)
+        tool.pack(fill='x', padx=10, pady=10)
+        
+        # === 1. ZONA DE SEGURIDAD (GENERADOR) ===
+        # Agrupamos el botón peligroso en un marco etiquetado para que destaque
+        safe_frame = ttk.LabelFrame(tool, text="Motor de Cálculo", padding=5)
+        safe_frame.pack(side='left', padx=5)
 
-        # Selector 1: MODO (¿Qué dimensión manda?)
-        ttk.Label(tool, text="Modo:").pack(side='left', padx=2)
-        self.viz_mode = tk.StringVar(value="General (Días)")
-        cb_mode = ttk.Combobox(tool, textvariable=self.viz_mode, state="readonly", width=15,
-                       values=["General (Días)", "Por Salón", "Por Maestro"])
-        ttk.Button(tool, text="🔄 Actualizar", command=self.render_visual_notebook).pack(side='left', padx=5)
-        cb_mode.pack(side='left', padx=5)
+        # Variable de control para el checkbox
+        self.force_reset = tk.BooleanVar(value=False)
         
-        # Selector 2: OBJETO (¿Cuál salón o cuál maestro?)
-        ttk.Label(tool, text="Ver:").pack(side='left', padx=2)
-        self.viz_target = tk.StringVar()
-        self.cb_target = ttk.Combobox(tool, textvariable=self.viz_target, state="readonly", width=20)
-        self.cb_target.pack(side='left', padx=5)
+        # Checkbox de "Seguro de vida"
+        chk_safe = ttk.Checkbutton(safe_frame, text="⚠️ Borrar actual y regenerar", 
+                                   variable=self.force_reset)
+        chk_safe.pack(side='top', anchor='w')
         
-        # Eventos: Cuando cambia el modo, actualizamos la lista de objetos
+        # Botón Calcular (Ahora llama a safe_generate_schedule)
+        ttk.Button(safe_frame, text="▶ EJECUTAR MOTOR", 
+                   command=self.safe_generate_schedule, 
+                   style="Accent.TButton").pack(side='top', fill='x', pady=2)
+
+        # === 2. BOTONES DE UTILIDAD ===
+        # Botón seguro: Solo repinta la interfaz sin tocar los datos
+        ttk.Button(tool, text="🔄 Refrescar Vista", 
+                   command=self.render_visual_notebook).pack(side='left', padx=10)
+
+        # === 3. SELECTORES (Estilo Grande) ===
+        big_font = ("Segoe UI", 11)
+
+        # Selector de MODO
+        ttk.Label(tool, text="Modo:").pack(side='left', padx=(10, 5))
+        self.viz_mode = tk.StringVar(value="Por Salón")
+        cb_mode = ttk.Combobox(tool, textvariable=self.viz_mode, 
+                               values=["General (Días)", "Por Salón", "Por Maestro"], 
+                               state="readonly", width=18, font=big_font)
+        cb_mode.pack(side='left', padx=5, ipady=4) 
         cb_mode.bind("<<ComboboxSelected>>", self.on_viz_mode_change)
+
+        # Selector de TARGET
+        ttk.Label(tool, text="Ver:").pack(side='left', padx=5)
+        self.viz_target = tk.StringVar()
+        self.cb_target = ttk.Combobox(tool, textvariable=self.viz_target, 
+                                      state="readonly", width=30, font=big_font)
+        self.cb_target.pack(side='left', padx=5, ipady=4)
         self.cb_target.bind("<<ComboboxSelected>>", lambda e: self.render_visual_notebook())
+
+        # Botón Exportar
+        ttk.Button(tool, text="💾 Exportar Excel", command=self.export_excel).pack(side='right')
         
-        ttk.Button(tool, text="Exportar Excel", command=self.export_excel).pack(side='right')
-        
-        # Contenedor de la grilla (Notebook o Frame simple)
+        # Contenedor de la grilla
         self.days_notebook = ttk.Notebook(self.visual_frame)
         self.days_notebook.pack(expand=True, fill='both', padx=5, pady=5)
+
+        # Inicialización
+        self.on_viz_mode_change(None)
+
+    def safe_generate_schedule(self):
+        """
+        Método wrapper que actúa como seguro antes de detonar el cálculo.
+        """
+        if not self.force_reset.get():
+            messagebox.showwarning(
+                "Protección Activada", 
+                "⛔ ACCIÓN BLOQUEADA\n\n"
+                "El botón de cálculo borrará todo el horario actual para crear uno nuevo.\n"
+                "Si estás seguro, marca la casilla: '⚠️ Borrar actual y regenerar'."
+            )
+            return
+        
+        # Si el usuario quitó el seguro, procedemos
+        self.execute_generation_sequence()
+        
+        # Opcional: Volvemos a poner el seguro automáticamente después de ejecutar
+        self.force_reset.set(False)
 
     def on_viz_mode_change(self, event):
         mode = self.viz_mode.get()
@@ -782,7 +900,7 @@ class SchoolSchedulerApp:
                         # Usamos emojis para guiar el ojo rápidamente
                         txt = f"{cell['subject']}\nGroup: {cell['group']}\n📍 {cell['display_room']}"
                     else:
-                        txt = f"{cell['subject']}\n{cell['group']}"
+                        txt = f"{cell['subject']}\n{cell['group']}\n{cell['teacher']}"
                         if not is_weekly_view:
                             # En vista general, añadimos el profe para referencia rápida
                             txt += f"\n {cell['teacher']}"

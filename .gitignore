@@ -1,1 +1,31 @@
 database.json
+# --- Python General ---
+# Archivos compilados que genera Python automáticamente (no sirven en otros PC)
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Entornos Virtuales (¡Muy Importante!) ---
+# Nunca subas esto, cada PC debe crear su propio venv
+.venv/
+venv/
+env/
+ENV/
+
+# --- PyInstaller (Empaquetado) ---
+# Carpetas temporales de compilación y el ejecutable final
+build/
+dist/
+*.spec
+
+
+# --- IDEs y Editores ---
+# Configuraciones locales de tu editor que no le interesan a nadie más
+.vscode/
+.idea/
+*.swp
+
+# --- Sistema Operativo ---
+# Basura que generan Windows y Mac
+Thumbs.db
+.DS_Store
