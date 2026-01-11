@@ -742,29 +742,49 @@ class SchoolSchedulerApp:
                 messagebox.showinfo("Éxito", "Clase movida correctamente.", parent=edit_win)
                 edit_win.destroy()
                 self.render_visual_notebook()
+
             else:
-                # NO ES SEGURO -> Análisis de conflicto
+                # --- ANÁLISIS FORENSE DEL ERROR ---
                 conflict_type, conf_cell, conf_room = self.scheduler_engine.get_conflict_details(
                     target_d, target_t, target_p, cell['group']
                 )
                 
-                # Regresamos la clase a su lugar original (Rollback)
+                # Rollback (Regresamos la clase original a su lugar por seguridad visual)
                 self.scheduler_engine._place_class(day, time, room, cell, subj_key)
                 
-                msg = "No se puede mover aquí.\n"
+                # --- AQUÍ CONSTRUYES TU MENSAJE DETALLADO ---
+                msg = f"⛔ CONFLICTO DE {conflict_type.upper()}\n\n"
+                
                 if conflict_type == "Maestro":
-                    msg += f"El maestro {target_p} ya está ocupado en:\n{conf_room} con {conf_cell['subject']}."
-                    # Aquí implementas la lógica de "cambiar la otra clase"
-                    if messagebox.askyesno("Conflicto", msg + "\n\n¿Quieres intentar mover la OTRA clase (la que estorba)?", parent=edit_win):
+                    # Reto para ti: Usa f-strings para acceder a conf_cell['subject'] y conf_cell['group']
+                    msg += f"El maestro {target_p} no puede estar en dos lugares.\n"
+                    msg += f"ACTUALMENTE: Está dando '{conf_cell['subject']}'\n"
+                    msg += f"A QUIÉN: Grupo {conf_cell['group']}\n"
+                    msg += f"DÓNDE: Salón {conf_room}"
+                    
+                    # Tu lógica de sugerencia existente...
+                    if messagebox.askyesno("Conflicto de Maestro", msg + "\n\n¿Quieres ir al choque para intentar mover LA OTRA clase?"):
                         edit_win.destroy()
-                        # Recursividad: Abrimos el editor para la clase que estorba
                         self.on_cell_click(target_d, target_t, conf_room)
+                    return # Importante retornar aquí para no mostrar el error genérico abajo
+
                 elif conflict_type == "Grupo":
-                    msg += f"El grupo {cell['group']} ya tiene clase a esa hora."
-                    messagebox.showerror("Error", msg, parent=edit_win)
+                    msg += f"El grupo {cell['group']} ya está ocupado a esta hora.\n"
+                    msg += f"MATERIA: {conf_cell['subject']}\n"
+                    msg += f"MAESTRO: {conf_cell['teacher']}\n"
+                    msg += f"SALÓN: {conf_room}"
+                    
+                elif conflict_type == "Salón":
+                    msg += f"El salón {target_r} ya está ocupado.\n"
+                    msg += f"POR: {conf_cell['subject']} ({conf_cell['group']})\n"
+                    msg += f"PROF: {conf_cell['teacher']}"
+
                 else:
-                    msg += "El salón está ocupado u otro conflicto."
-                    messagebox.showerror("Error", msg, parent=edit_win)
+                    msg += "Conflicto desconocido o capacidad excedida."
+
+                # Mostramos el mensaje final detallado
+                messagebox.showerror("No se pudo mover", msg, parent=edit_win)
+
 
         def delete_class():
             if messagebox.askyesno("Confirmar", "¿Eliminar clase permanentemente?", parent=edit_win):
@@ -784,8 +804,10 @@ class SchoolSchedulerApp:
         # Ventana modal pequeña
         win = Toplevel(self.root)
         win.title(f"Agregar: {day} {time}:00 - {room}")
-        win.geometry("300x250")
+        win.geometry("650x650")
         
+        pad_opts = {'padx':15, 'pady':8}
+
         ttk.Label(win, text="Materia:").pack(pady=2)
         v_mat = ttk.Combobox(win, values=self.data['Materias']); v_mat.pack()
         
@@ -799,21 +821,65 @@ class SchoolSchedulerApp:
         v_dur = ttk.Spinbox(win, from_=1, to=3, width=5); v_dur.set(1); v_dur.pack()
 
         def confirm():
+            # 1. Capturamos lo que el usuario quiere crear
             cls = {
-                'subject': v_mat.get(), 'teacher': v_prof.get(),
-                'group': v_gpo.get(), 'duration': int(v_dur.get())
+                'subject': v_mat.get(), 
+                'teacher': v_prof.get(),
+                'group': v_gpo.get(), 
+                'duration': int(v_dur.get())
             }
-            if not all([cls['subject'], cls['teacher'], cls['group']]): return
             
-            # Intentar colocar (Check safety manually first or force it)
+            # Validación básica de campos vacíos
+            if not all([cls['subject'], cls['teacher'], cls['group']]): 
+                messagebox.showwarning("Faltan datos", "Por favor llena todos los campos.", parent=win)
+                return
+            
             subj_key = f"{cls['subject']}_{cls['group']}"
+            
+            # 2. INTENTO DE COLOCACIÓN
+            # Verificamos si es seguro agregar la clase
             if self.scheduler_engine._is_safe(day, time, room, cls['teacher'], cls['group'], cls['duration'], subj_key):
+                # ES SEGURO -> Procedemos
                 self.scheduler_engine._place_class(day, time, room, cls, subj_key)
                 self.render_visual_notebook()
-                win.destroy()
+                win.destroy() # Cerramos la ventanita
             else:
-                messagebox.showerror("Conflicto", "No se puede colocar aquí (Choque de horario/profe/grupo).")
+                # NO ES SEGURO -> DIAGNÓSTICO
+                # Aquí invocamos al mismo método que usaste en 'on_cell_click'
+                conflict_type, conf_cell, conf_room = self.scheduler_engine.get_conflict_details(
+                    day, time, cls['teacher'], cls['group']
+                )
+                
+                # Construcción del reporte de error
+                msg = f"⛔ NO SE PUEDE AGREGAR ({conflict_type})\n\n"
+                
+                if conflict_type == "Maestro":
+                    msg += f"El maestro {cls['teacher']} ya está ocupado.\n"
+                    if conf_cell:
+                        msg += f"DANDO: {conf_cell.get('subject', '?')} al grupo {conf_cell.get('group', '?')}\n"
+                        msg += f"UBICACIÓN: Salón {conf_room}"
+                    else:
+                        msg += "Razón: Restricción de horario o bloqueo manual."
 
+                elif conflict_type == "Grupo":
+                    msg += f"El grupo {cls['group']} no está disponible.\n"
+                    if conf_cell:
+                        msg += f"YA TIENE CLASE DE: {conf_cell.get('subject', '?')}\n"
+                        msg += f"CON EL PROFE: {conf_cell.get('teacher', '?')}\n"
+                        msg += f"EN EL SALÓN: {conf_room}"
+                
+                elif conflict_type == "Salón":
+                    # Este caso es raro si diste click en una celda vacía, 
+                    # pero puede pasar si intentas meter un bloque de 2 horas 
+                    # y la SEGUNDA hora está ocupada.
+                    msg += f"El salón {room} se ocupa durante el bloque de {cls['duration']}h.\n"
+                    if conf_cell:
+                        msg += f"CHOCA CON: {conf_cell.get('subject', '?')} ({conf_cell.get('group', '?')})"
+
+                else:
+                    msg += "Conflicto desconocido (posible choque de duración múltiple o restricción externa)."
+                
+                messagebox.showerror("Choque de Horario", msg, parent=win)
         ttk.Button(win, text="💾 Guardar", command=confirm).pack(pady=10)
 
     # --- MENÚ DE ACCIONES (Celda Llena) ---
