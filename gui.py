@@ -2,6 +2,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog, Toplevel
 import pandas as pd
 import json
+import ctypes
+import platform
 import os
 from scheduler import AutoScheduler 
 from functools import partial 
@@ -9,8 +11,17 @@ from functools import partial
 class SchoolSchedulerApp:
     def __init__(self, root):
         self.root = root
+
+        self.scale_factor = self._configurar_dpi()
+
         self.root.title("Gestor de Horarios Modular")
-        self.root.geometry("1100x850")
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+            
+        w = int(screen_w * 0.8)
+        h = int(screen_h * 0.8)
+        
+        self.root.geometry(f"{w}x{h}")
 
         self.db_file = "database.json"
         self.data = {
@@ -44,6 +55,43 @@ class SchoolSchedulerApp:
         self.create_visual_tab()
 
         self.load_state()
+
+    def _configurar_dpi(self):
+        """
+        Ajusta la escala de la UI basándose en el sistema operativo y la densidad del monitor.
+        Objetivo: S_factor = DPI_real / 96.0
+        """
+        sistema = platform.system()
+        scale_factor = 1.0
+        
+        if sistema == "Windows":
+            try:
+                # Windows 10/11: SetProcessDpiAwareness(1)
+                ctypes.windll.shcore.SetProcessDpiAwareness(1)
+                scale_factor = ctypes.windll.shcore.GetScaleFactorForDevice(0) / 100
+            except:
+                try:
+                    # Windows 7/8
+                    ctypes.windll.user32.SetProcessDPIAware()
+                except:
+                    pass # Fallback silencioso
+                    
+        elif sistema == "Linux":
+            # Para tu Hyprland/CachyOS
+            dpi = self.root.winfo_fpixels('1i')
+            scale_factor = dpi / 96.0
+            
+            # Corrección heurística para pantallas HiDPI en Linux si Tkinter se queda corto
+            if scale_factor < 1.2 and self.root.winfo_screenwidth() > 1920:
+                 scale_factor = 1.5 
+        
+        # Aplicamos el factor al motor gráfico Tcl
+        # Esto reescala fuentes y grosores de widgets
+        self.root.tk.call('tk', 'scaling', scale_factor)
+        
+        # Opcional: Retornar el factor por si quieres ajustar tamaños de fuente manualmente
+        return scale_factor 
+
 
     # --- PESTAÑAS DE DATOS ---
     def create_data_input_tab(self):
@@ -501,64 +549,78 @@ class SchoolSchedulerApp:
         # Encabezados
         tk.Label(parent, text="Hora", font=('Arial', 9, 'bold'), bg="#ccc", width=8).grid(row=0, column=0, padx=1, pady=1)
         for j, c in enumerate(cols):
-            tk.Label(parent, text=c, font=('Arial', 9, 'bold'), bg="#ddd", width=18).grid(row=0, column=j+1, padx=1, pady=1)
+            # Ajustamos ancho visual por el factor de escala
+            w_col = int(18 * getattr(self, 'scale_factor', 1.0)) 
+            tk.Label(parent, text=c, font=('Arial', 9, 'bold'), bg="#ddd", width=20).grid(row=0, column=j+1, padx=1, pady=1)
 
         # Celdas
         for i, h in enumerate(hours):
             tk.Label(parent, text=f"{h}:00", font=('Arial', 8, 'bold'), bg="#eee").grid(row=i+1, column=0, sticky="nsew", padx=1, pady=1)
             for j, col in enumerate(cols):
                 cell = df.at[h, col]
-                bg = "#c3e6cb" if cell else "white"
-                txt = "---"
                 
-                # Variables para identificar la celda única en la lógica del Scheduler
+                # --- [CAMBIO CRÍTICO 1] ---
+                # Calculamos las coordenadas ANTES de decidir si pintamos botón lleno o vacío
                 target_day = None
                 target_room = None
-
-                if cell:
-                    # Lógica de texto y recuperación de coordenadas reales
-                    if is_weekly_view:
-                        # VISTA SEMANAL: Las columnas (col) son Días.
-                        target_day = col 
-                        
-                        if 'display_room' in cell: # Es vista Maestro
-                            txt = f"{cell['subject']}\n{cell['group']}\n📍 {cell['display_room']}"
-                            target_room = cell['display_room']
-                        else: # Es vista Salón
-                            txt = f"{cell['subject']}\n({cell['teacher']})\n{cell['group']}"
-                            # En vista Salón, el salón es el contexto de la pestaña
-                            target_room = tab_context 
-                    else:
-                        # VISTA GENERAL: El contexto de la pestaña es el Día. La columna es el Salón.
-                        txt = f"{cell['subject']}\n{cell['group']}"
-                        target_day = tab_context
-                        target_room = col
-
-                    # CREACIÓN DEL BOTÓN ACTIVO
-                    # Usamos partial para capturar el estado actual de h, target_day, target_room
-                    btn = tk.Button(
-                        parent, 
-                        text=txt, 
-                        bg=bg, 
-                        font=('Arial', 8), 
-                        height=4, 
-                        width=18, 
-                        relief="flat",
-                        # Aquí está la magia: Conectamos el clic a on_cell_click
-                        command=partial(self.on_cell_click, target_day, h, target_room)
-                    )
-                else:
-                    # Si no hay celda, un botón deshabilitado o label
-                    btn = tk.Label(parent, text="", bg="white", height=4, width=18)
-
-                btn.grid(row=i+1, column=j+1, padx=1, pady=1, sticky="nsew")          
                 
+                if is_weekly_view:
+                    # VISTA SEMANAL: Columna = Día
+                    target_day = col
+                    if cell and 'display_room' in cell:
+                        target_room = cell['display_room']
+                    else:
+                        target_room = tab_context # El contexto es el salón/maestro
+                else:
+                    # VISTA GENERAL: Contexto = Día, Columna = Salón
+                    target_day = tab_context
+                    target_room = col
+
+                # --- [CAMBIO CRÍTICO 2] ---
+                # Ahora decidimos el estilo, pero AMBOS casos llevan botón
+                
+                if cell:
+                    # CASO OCUPADO
+                    bg = "#c3e6cb"
+                    if is_weekly_view and 'display_room' in cell:
+                        txt = f"{cell['subject']}\n{cell['group']}\n📍 {cell['display_room']}"
+                    else:
+                        txt = f"{cell['subject']}\n{cell['group']}"
+                        
+                    cmd = partial(self.on_cell_click, target_day, h, target_room)
+                    state = "normal"
+                    relief = "raised"
+                    
+                else:
+                    # CASO VACÍO (LIBRE)
+                    bg = "white"
+                    txt = "+" # Un indicativo sutil de que se puede agregar
+                    # Aquí conectamos el mismo evento click
+                    cmd = partial(self.on_cell_click, target_day, h, target_room)
+                    state = "normal"
+                    relief = "flat" # Plano para que se vea limpio hasta que pases el mouse
+
+                # Renderizamos el BOTÓN (Ya no usamos Label para los vacíos)
+                btn = tk.Button(
+                    parent, 
+                    text=txt, 
+                    bg=bg, 
+                    font=('Arial', 8), 
+                    height=4, 
+                    width=18, 
+                    relief=relief,
+                    command=cmd # <--- ¡Aquí está la magia!
+                )
+                btn.grid(row=i+1, column=j+1, padx=1, pady=1, sticky="nsew")
+
     def on_cell_click(self, day, time, room):
         if not self.scheduler_engine: return
         try:
             cell = self.scheduler_engine.grid[day].at[time, room]
-        except: return
-        if not cell: return
+        except:
+            cell = None
+        if not cell:
+            self.open_add_menu(day, time, room)
 
         # --- VENTANA EMERGENTE (EDITOR) ---
         edit_win = tk.Toplevel(self.root)
