@@ -1342,12 +1342,168 @@ class SchoolSchedulerApp:
         self.render_visual_notebook()
         
     def export_excel(self):
-        if not self.scheduler_engine: return
-        fname = filedialog.asksaveasfilename(defaultextension=".xlsx")
-        if fname:
-            ok, msg = self.scheduler_engine.export_excel(fname)
-            messagebox.showinfo("Exportar", msg)
+        # 1. Verificación de seguridad
+        if not self.scheduler_engine:
+            messagebox.showwarning("Atención", "Primero debes generar o cargar un horario.")
+            return
 
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx")],
+            title="Exportar Horario Completo"
+        )
+        if not filename: return
+
+        try:
+            with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
+                workbook = writer.book
+                
+                # --- FORMATOS ---
+                # Encabezados (Azul oscuro)
+                fmt_header = workbook.add_format({
+                    'bold': True, 'align': 'center', 'valign': 'vcenter',
+                    'bg_color': '#2c3e50', 'font_color': 'white', 'border': 1
+                })
+                # Estándar
+                fmt_center = workbook.add_format({
+                    'align': 'center', 'valign': 'vcenter', 'border': 1
+                })
+                
+                # Cache de formatos de colores (Reutilizable)
+                color_formats = {}
+                def get_color_format(hex_color):
+                    if hex_color not in color_formats:
+                        fg_color = self._get_contrast_text_color(hex_color)
+                        color_formats[hex_color] = workbook.add_format({
+                            'bg_color': hex_color,
+                            'font_color': fg_color,
+                            'text_wrap': True,
+                            'valign': 'vcenter',
+                            'align': 'center',
+                            'border': 1,
+                            'font_size': 9
+                        })
+                    return color_formats[hex_color]
+
+                # ==========================================
+                # 0. NUEVA PESTAÑA: CATÁLOGOS (LISTAS)
+                # ==========================================
+                # Construimos un dict con Series para manejar longitudes diferentes automágicamente
+                catalogs_data = {
+                    "Materias (Color)": pd.Series(self.data['Materias']),
+                    "Maestros": pd.Series(self.data['Maestros']),
+                    "Grupos": pd.Series(self.data['Grupos']),
+                    "Salones": pd.Series(self.data['Salones'])
+                }
+                
+                df_catalogs = pd.DataFrame(catalogs_data)
+                
+                # Guardamos en la hoja "Listas Generales"
+                sheet_cat = "Listas Generales"
+                df_catalogs.to_excel(writer, sheet_name=sheet_cat, index=False)
+                
+                ws_cat = writer.sheets[sheet_cat]
+                
+                # Dar formato a los encabezados
+                for col_num, value in enumerate(df_catalogs.columns.values):
+                    ws_cat.write(0, col_num, value, fmt_header)
+                    ws_cat.set_column(col_num, col_num, 25) # Ancho de columna
+
+                # >>> MAGIA DE COLORES <<<
+                # Iteramos sobre la columna de materias (Columna A -> index 0)
+                # para aplicar el formato de fondo según el color guardado.
+                materias_list = self.data['Materias']
+                for i, materia in enumerate(materias_list):
+                    # Recuperamos el color hexadecimal
+                    bg = self.subject_colors.get(materia, '#ffffff')
+                    # Creamos el formato
+                    fmt = get_color_format(bg)
+                    # Escribimos: Fila i+1 (por el header), Col 0 (Materias)
+                    ws_cat.write(i + 1, 0, materia, fmt)
+                    
+                # Aplicar bordes simples a las otras columnas para que se vea ordenado
+                # (Maestros, Grupos, Salones)
+                max_rows = len(df_catalogs)
+                for row in range(max_rows):
+                    for col in range(1, 4): # Columnas 1, 2, 3
+                        val = df_catalogs.iloc[row, col]
+                        # pd.isna verifica si es NaN (celda vacía por diferencia de longitud)
+                        if not pd.isna(val):
+                            ws_cat.write(row + 1, col, val, fmt_center)
+
+                # ==========================================
+                # 1. VISTA POR SALÓN (Tu favorita)
+                # ==========================================
+                days = self.scheduler_engine.days
+                hours = self.scheduler_engine.hours
+                fmt_index = workbook.add_format({
+                    'bold': True, 'align': 'center', 'valign': 'vcenter',
+                    'bg_color': '#ecf0f1', 'border': 1
+                })
+
+                for room in self.data['Salones']:
+                    df_room = pd.DataFrame(index=hours, columns=days)
+                    meta_colors = pd.DataFrame(index=hours, columns=days)
+
+                    for d in days:
+                        for h in hours:
+                            cell = self.scheduler_engine.grid[d].at[h, room]
+                            if cell:
+                                text = f"{cell['subject']}\n({cell['group']})\n{cell['teacher']}"
+                                df_room.at[h, d] = text
+                                meta_colors.at[h, d] = self.subject_colors.get(cell['subject'], '#ffffff')
+                            else:
+                                df_room.at[h, d] = ""
+
+                    sheet_name = f"S-{room}"[:31]
+                    df_room.to_excel(writer, sheet_name=sheet_name)
+                    worksheet = writer.sheets[sheet_name]
+                    
+                    worksheet.set_column(0, 0, 10, fmt_index)
+                    worksheet.set_column(1, len(days), 25)
+                    
+                    for row_idx, h in enumerate(hours):
+                        for col_idx, d in enumerate(days):
+                            color = meta_colors.at[h, d]
+                            val = df_room.at[h, d]
+                            if val:
+                                worksheet.write(row_idx + 1, col_idx + 1, val, get_color_format(color))
+                            else:
+                                worksheet.write(row_idx + 1, col_idx + 1, "", workbook.add_format({'border': 1}))
+
+                # ==========================================
+                # 2. VISTA GENERAL (Resumen Diario)
+                # ==========================================
+                for day in days:
+                    df_orig = self.scheduler_engine.grid[day]
+                    sheet_name = f"G-{day}"
+                    worksheet = workbook.add_worksheet(sheet_name)
+                    writer.sheets[sheet_name] = worksheet
+                    
+                    # Encabezados
+                    worksheet.write(0, 0, "Hora", fmt_header)
+                    for c_idx, col_name in enumerate(df_orig.columns):
+                        worksheet.write(0, c_idx + 1, col_name, fmt_header)
+                        
+                    worksheet.set_column(0, 0, 8, fmt_index)
+                    worksheet.set_column(1, len(df_orig.columns), 20)
+
+                    for r_idx, h in enumerate(df_orig.index):
+                        worksheet.write(r_idx + 1, 0, f"{h}:00", fmt_index)
+                        for c_idx, room in enumerate(df_orig.columns):
+                            cell = df_orig.at[h, room]
+                            if cell:
+                                text = f"{cell['subject']}\n{cell['group']}\n{cell['teacher']}"
+                                color = self.subject_colors.get(cell['subject'], '#ffffff')
+                                worksheet.write(r_idx + 1, c_idx + 1, text, get_color_format(color))
+                            else:
+                                worksheet.write(r_idx + 1, c_idx + 1, "", workbook.add_format({'border': 1}))
+
+            messagebox.showinfo("Exportación Exitosa", f"Archivo generado con listas y colores:\n{filename}")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Detalle técnico: {str(e)}")
+            print(e)
 
 
 

@@ -1,4 +1,7 @@
 database.json
+.xlsx
+
+
 # --- Python General ---
 # Archivos compilados que genera Python automáticamente (no sirven en otros PC)
 __pycache__/

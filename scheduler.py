@@ -190,18 +190,141 @@ class AutoScheduler:
                         alternatives.append(f"{d} {h}:00 - {r}")
         
         return alternatives
+    def export_excel(self):
+        if not self.scheduler_engine:
+            messagebox.showwarning("Atención", "Primero debes generar o cargar un horario.")
+            return
 
-    def export_excel(self, filename="horario_generado.xlsx"):
-        
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx")],
+            title="Exportar Horario Maestro"
+        )
+        if not filename: return
+
         try:
-            with pd.ExcelWriter(filename) as writer:
-                for day in self.days:
-                    df_export = self.grid[day].copy()
-                    def formatter(x):
-                        if x is None: return ""
-                        return f"{x['subject']}\n({x['teacher']})"
-                    df_export = df_export.applymap(formatter)
-                    df_export.to_excel(writer, sheet_name=day)
-            return True, f"Guardado exitosamente en {filename}"
+            # Usamos xlsxwriter como motor para poder dar estilos (colores)
+            with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
+                workbook = writer.book
+                
+                # --- ESTILOS BASE ---
+                fmt_header = workbook.add_format({
+                    'bold': True, 'align': 'center', 'valign': 'vcenter',
+                    'bg_color': '#2c3e50', 'font_color': 'white', 'border': 1
+                })
+                fmt_index = workbook.add_format({
+                    'bold': True, 'align': 'center', 'valign': 'vcenter',
+                    'bg_color': '#ecf0f1', 'border': 1
+                })
+                
+                # Cache de formatos de materias para no recrearlos mil veces
+                # Clave: HexColor -> Valor: Objeto Formato XlsxWriter
+                color_formats = {}
+
+                def get_color_format(hex_color):
+                    if hex_color not in color_formats:
+                        # Calcular color de texto (blanco o negro) basado en fondo
+                        fg_color = self._get_contrast_text_color(hex_color)
+                        color_formats[hex_color] = workbook.add_format({
+                            'bg_color': hex_color,
+                            'font_color': fg_color,
+                            'text_wrap': True,
+                            'valign': 'vcenter',
+                            'align': 'center',
+                            'border': 1,
+                            'font_size': 9
+                        })
+                    return color_formats[hex_color]
+
+                days = self.scheduler_engine.days
+                hours = self.scheduler_engine.hours
+
+                # ==========================================
+                # 1. VISTA POR SALÓN (PRIORIDAD)
+                # ==========================================
+                for room in self.data['Salones']:
+                    # Crear matriz para este salón: Index=Horas, Cols=Días
+                    df_room = pd.DataFrame(index=hours, columns=days)
+                    
+                    # Matriz paralela para guardar los colores (metadata)
+                    meta_colors = pd.DataFrame(index=hours, columns=days)
+
+                    for d in days:
+                        for h in hours:
+                            cell = self.scheduler_engine.grid[d].at[h, room]
+                            if cell:
+                                # Texto detallado en la celda
+                                text = f"{cell['subject']}\n({cell['group']})\n{cell['teacher']}"
+                                df_room.at[h, d] = text
+                                
+                                # Guardar el color correspondiente a la materia
+                                meta_colors.at[h, d] = self.subject_colors.get(cell['subject'], '#ffffff')
+                            else:
+                                df_room.at[h, d] = "" # Celda vacía
+
+                    # Escribir a Excel (Hoja con nombre del salón)
+                    sheet_name = f"Salón {room}"[:31] # Excel limita nombres a 31 chars
+                    df_room.to_excel(writer, sheet_name=sheet_name)
+                    
+                    worksheet = writer.sheets[sheet_name]
+                    
+                    # --- APLICAR FORMATO VISUAL ---
+                    # Ajustar ancho de columnas
+                    worksheet.set_column(0, 0, 10, fmt_index) # Columna de horas
+                    worksheet.set_column(1, len(days), 25)    # Columnas de días
+                    
+                    # Pintar celdas
+                    for row_idx, h in enumerate(hours):
+                        for col_idx, d in enumerate(days):
+                            color = meta_colors.at[h, d]
+                            val = df_room.at[h, d]
+                            
+                            if val: # Si hay clase
+                                fmt = get_color_format(color)
+                                # row_idx + 1 porque la fila 0 es el encabezado
+                                # col_idx + 1 porque la col 0 es el index (Horas)
+                                worksheet.write(row_idx + 1, col_idx + 1, val, fmt)
+                            else:
+                                # Celda vacía con borde simple
+                                worksheet.write(row_idx + 1, col_idx + 1, "", workbook.add_format({'border': 1}))
+
+                # ==========================================
+                # 2. VISTA GENERAL (POR DÍA)
+                # ==========================================
+                for day in days:
+                    df_orig = self.scheduler_engine.grid[day]
+                    # Crear versión de texto plano para Excel
+                    df_display = pd.DataFrame(index=df_orig.index, columns=df_orig.columns)
+                    
+                    sheet_name = f"General - {day}"
+                    
+                    worksheet = workbook.add_worksheet(sheet_name)
+                    writer.sheets[sheet_name] = worksheet
+                    
+                    # Escribir encabezados manualmente para control total
+                    worksheet.write(0, 0, "Hora", fmt_header)
+                    for c_idx, col_name in enumerate(df_orig.columns):
+                        worksheet.write(0, c_idx + 1, col_name, fmt_header)
+                        
+                    worksheet.set_column(0, 0, 8, fmt_index)
+                    worksheet.set_column(1, len(df_orig.columns), 20)
+
+                    for r_idx, h in enumerate(df_orig.index):
+                        # Escribir hora
+                        worksheet.write(r_idx + 1, 0, f"{h}:00", fmt_index)
+                        
+                        for c_idx, room in enumerate(df_orig.columns):
+                            cell = df_orig.at[h, room]
+                            if cell:
+                                text = f"{cell['subject']}\n{cell['group']}\n{cell['teacher']}"
+                                color = self.subject_colors.get(cell['subject'], '#ffffff')
+                                fmt = get_color_format(color)
+                                worksheet.write(r_idx + 1, c_idx + 1, text, fmt)
+                            else:
+                                worksheet.write(r_idx + 1, c_idx + 1, "", workbook.add_format({'border': 1}))
+
+            messagebox.showinfo("Exportación Exitosa", f"Archivo generado:\n{filename}")
+            
         except Exception as e:
-            return False, str(e)
+            messagebox.showerror("Error de Exportación", f"No se pudo guardar el archivo.\nDetalle: {str(e)}")
+            print(e)
