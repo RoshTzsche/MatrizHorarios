@@ -2,10 +2,6 @@
 
 Sistema de orquestación de horarios universitarios mediante algoritmos de resolución combinatoria.
 
-## ¿Por qué ejecutar desde el código fuente en lugar de un ejecutable (.exe)?
-
-Compilar aplicaciones Python con interfaces gráficas (Tkinter) y librerías de análisis de datos (Pandas) mediante herramientas como PyInstaller suele generar binarios pesados y frágiles. Ejecutar el código fuente directamente garantiza la compatibilidad multiplataforma, facilita la depuración de dependencias (como la capa XWayland en Linux o las llamadas a la API de Windows para la resolución DPI) y mantiene las rutas relativas de los recursos locales intactas.
-
 ## Instalación y Ejecución
 
 ### 1. Linux (Distribuciones basadas en Arch / CachyOS)
